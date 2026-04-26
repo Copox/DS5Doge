@@ -12,7 +12,8 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v4
         with:
-          submodules: recursive
+          submodules: recursive  # 🔥 确保拉取所有子模块（包括新增的 Opus）
+          fetch-depth: 0
 
       - name: 清理环境
         run: rm -rf build
@@ -23,20 +24,14 @@ jobs:
           sudo apt install -y build-essential g++ cmake git python3 \
             gcc-arm-none-eabi libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib
 
-      # 🔥 核心：使用项目要求的 Pico SDK 2.2.0 版本 + 更新 tinyusb
-      - name: 初始化 Pico SDK 2.2.0
+      - name: 初始化 Pico SDK 2.2.0 + 最新 tinyusb
         run: |
-          # 克隆项目要求的 SDK 2.2.0 版本
           git clone --depth 1 --branch 2.2.0 https://github.com/raspberrypi/pico-sdk.git ~/pico-sdk
           cd ~/pico-sdk
           git submodule update --init --recursive
-          
-          # 按项目要求更新 tinyusb 到最新版
           cd lib/tinyusb
-          git fetch origin
-          git reset --hard origin/master
+          git fetch origin && git reset --hard origin/master
 
-      # 🔥 精准适配：完全按照项目 CMakeLists.txt 配置，不添加多余参数
       - name: 配置 CMake
         run: |
           mkdir build && cd build
@@ -47,16 +42,15 @@ jobs:
           cd build
           make -j$(nproc)
           
-          # 🔥 查看所有生成的文件（确认UF2存在）
+          # 查看构建产物
           echo "=== 构建产物 ==="
           ls -lh
-          echo "=== 所有子目录 ==="
-          find . -type f -name "*.uf2" -o -name "*.elf"
+          echo "=== 查找 UF2 固件 ==="
+          find . -name "*.uf2"
 
-      # 🔥 上传所有找到的 UF2 文件
       - name: 上传刷机固件
         uses: actions/upload-artifact@v4
         with:
-          name: Pico2W-Normal-DS5-Firmware
+          name: Pico2W-Normal-DS5-Firmware-v0.5.0
           path: build/**/*.uf2
           retention-days: 90
