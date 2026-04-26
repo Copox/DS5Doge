@@ -12,7 +12,7 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v4
         with:
-          submodules: recursive  # 🔥 确保拉取所有子模块（包括新增的 Opus）
+          submodules: recursive
           fetch-depth: 0
 
       - name: 清理环境
@@ -31,6 +31,15 @@ jobs:
           git submodule update --init --recursive
           cd lib/tinyusb
           git fetch origin && git reset --hard origin/master
+
+      # 🔥 核心：自动从 CMakeLists.txt 读取版本号
+      - name: 提取固件版本号
+        id: get_version
+        run: |
+          # 使用 grep 和 sed 从 CMakeLists.txt 中提取版本号
+          VERSION=$(grep -E 'pico_set_program_version\(ds5-bridge "[0-9]+\.[0-9]+\.[0-9]+"\)' CMakeLists.txt | sed -E 's/.*"([0-9]+\.[0-9]+\.[0-9]+)".*/\1/')
+          echo "提取到的版本号: $VERSION"
+          echo "FIRMWARE_VERSION=$VERSION" >> $GITHUB_ENV
 
       - name: 配置 CMake
         run: |
@@ -51,6 +60,7 @@ jobs:
       - name: 上传刷机固件
         uses: actions/upload-artifact@v4
         with:
-          name: Pico2W-Normal-DS5-Firmware-v0.5.0
+          # 🔥 使用自动提取的版本号动态命名
+          name: Pico2W-Normal-DS5-Firmware-v${{ env.FIRMWARE_VERSION }}
           path: build/**/*.uf2
           retention-days: 90
