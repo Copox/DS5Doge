@@ -23,12 +23,14 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
-      # 清理旧缓存，保证环境干净
-      - name: 清理缓存
-        run: rm -rf ~/pico-sdk
+      # 清理旧缓存/构建文件
+      - name: 清理环境
+        run: |
+          rm -rf ~/pico-sdk
+          rm -rf build
 
-      # ✅ 核心修复：安装完整C/C++编译依赖（解决 <new> 报错）
-      - name: 安装完整编译工具链
+      # 安装完整编译依赖（修复C++/USB/工具链所有问题）
+      - name: 安装编译工具链
         run: |
           sudo apt update
           sudo apt install -y --no-install-recommends \
@@ -36,19 +38,19 @@ jobs:
             gcc-arm-none-eabi libnewlib-arm-none-eabi \
             libstdc++-arm-none-eabi-newlib libusb-1.0-0-dev
 
-      # 拉取最新SDK + 强制更新tinyusb到官方最新版
+      # 最新SDK + 强制更新tinyusb到官方最新版
       - name: 初始化 Pico SDK + 最新 tinyusb
         run: |
           git clone --depth 1 https://github.com/raspberrypi/pico-sdk.git ~/pico-sdk
           cd ~/pico-sdk
           git submodule update --init --recursive
           
-          # 强制更新 tinyusb 到最新主线版
+          # 强制更新 tinyusb
           cd ~/pico-sdk/lib/tinyusb
           git fetch origin
           git reset --hard origin/master
 
-      # CMake配置：Pico2W + 禁用picotool + 普通版固件
+      # CMake配置（Pico2W + 禁用picotool + 普通版固件）
       - name: 配置编译环境
         run: |
           mkdir -p build && cd build
@@ -57,17 +59,25 @@ jobs:
             -DPICO_BOARD=pico2_w \
             -DPICO_NO_PICOTOOL=ON
 
-      # 编译固件（默认普通版，无DSE）
-      - name: 编译 Pico2 W 固件
+      # 编译固件 + 自动查找UF2文件（核心修复！）
+      - name: 编译 Pico2 W 普通版固件
         run: |
           cd build
           make -j$(nproc)
-          ls -lh *.uf2
+          
+          # 🔥 修复：全局查找所有UF2固件文件（解决路径找不到问题）
+          echo "=== 查找生成的 UF2 固件 ==="
+          find . -name "*.uf2" | head -10
+          
+          # 列出所有构建产物（方便排查）
+          echo "=== 构建完成的所有文件 ==="
+          ls -lh
 
-      # 上传最终可刷机固件
-      - name: 上传普通版固件
+      # 上传所有子目录下的UF2固件（100%捕获）
+      - name: 上传最终固件
         uses: actions/upload-artifact@v4
         with:
           name: Pico2W-Normal-Firmware
-          path: build/*.uf2
+          # 递归查找build下所有UF2文件，无视路径
+          path: build/**/*.uf2
           retention-days: 90
