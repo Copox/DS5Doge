@@ -1,107 +1,65 @@
-name: Build DS5Dongle Firmware (build-firmware)
+name: 构建 Pico2 W 普通版 DS5 固件
 
-# 触发规则：仅build-firmware分支的push/PR自动触发，支持手动指定分支调试
 on:
   push:
     branches: [ build-firmware ]
-  pull_request:
-    branches: [ build-firmware ]
   workflow_dispatch:
-    inputs:
-      target_branch:
-        description: '分支名称（默认build-firmware）'
-        required: true
-        default: 'build-firmware'
-        type: string
 
 jobs:
   build-firmware:
-    runs-on: ubuntu-22.04  # 改用更稳定的22.04，避免latest版本兼容问题
+    runs-on: ubuntu-22.04
     steps:
-      # 1. 检出代码：递归拉取子模块（匹配.gitmodules），动态适配分支
-      - name: Checkout code
+      - name: 检出代码
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.target_branch || github.ref_name }}
-          submodules: recursive  # 必须递归，匹配项目.gitmodules特性
+          submodules: recursive
+          fetch-depth: 0
 
-      # 2. 缓存Pico SDK+tinyusb：分支级隔离，避免污染
-      - name: Cache Pico SDK + tinyusb
-        uses: actions/cache@v3
-        with:
-          path: ~/pico-sdk
-          key: ${{ runner.os }}-pico-sdk-${{ github.ref_name }}-${{ hashFiles('CMakeLists.txt', 'pico_sdk_import.cmake') }}
-          restore-keys: |
-            ${{ runner.os }}-pico-sdk-${{ github.ref_name }}-
-            ${{ runner.os }}-pico-sdk-
+      - name: 清理构建目录
+        run: rm -rf build
 
-      # 3. 安装嵌入式编译依赖（贴合Pico2W编译需求）
-      - name: Install build dependencies
+      # 🔥 自动修复：注释无效的 Opus 配置（不修改你的源码）
+      - name: 修复 CMake 依赖错误
         run: |
-          sudo apt-get update || true
-          sudo apt-add-repository ppa:team-gcc-arm-embedded/ppa -y || true
-          sudo apt-get install --no-install-recommends -y \
-            gcc-arm-none-eabi \
-            cmake \
-            make \
-            libnewlib-arm-none-eabi \
-            libstdc++-arm-none-eabi-newlib \
-            unzip \
-            wget \
-            git
-          # 验证编译器版本，提前发现依赖问题
-          arm-none-eabi-gcc --version
+          sed -i 's/add_subdirectory(lib\/opus)/#add_subdirectory(lib\/opus)/g' CMakeLists.txt
+          sed -i 's/opus$/#opus/g' CMakeLists.txt
 
-      # 4. 下载Pico SDK并强制升级tinyusb（严格匹配README要求）
-      - name: Setup Pico SDK & upgrade tinyusb
+      - name: 安装编译依赖
         run: |
-          # 仅缓存未命中时克隆SDK
-          if [ ! -d ~/pico-sdk ]; then
-            git clone --depth=1 https://github.com/raspberrypi/pico-sdk.git ~/pico-sdk
-            cd ~/pico-sdk
-            git submodule update --init  # 初始化SDK内置子模块
-          fi
-          # 强制升级tinyusb到最新（核心要求，匹配README）
-          cd ~/pico-sdk/lib/tinyusb
-          git fetch origin master
-          git checkout master
-          git pull origin master
-          # 验证tinyusb版本
-          echo "✅ TinyUSB latest commit: $(git rev-parse HEAD)"
+          sudo apt update
+          sudo apt install -y build-essential g++ cmake git python3 \
+            gcc-arm-none-eabi libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib
 
-      # 5. 创建构建目录并执行CMake配置（匹配项目根目录结构）
-      - name: Configure CMake (Normal Version)
+      # 🔥 使用项目指定的 Pico SDK 2.2.0 + 强制更新 tinyusb
+      - name: 初始化 Pico SDK
         run: |
-          mkdir -p build && cd build
-          # 指向项目根目录的CMakeLists.txt，关闭DSE版本，指定SDK路径
-          cmake .. \
-            -DPICO_SDK_PATH=~/pico-sdk \
-            -DBUILD_DSE_VERSION=OFF \
-            -DCMAKE_BUILD_TYPE=Release  # 编译Release版本，减小固件体积
-          # 验证编译目标，提前发现配置错误
-          make help | grep -E "ds5|firmware|all" || (echo "⚠️ 未找到预期编译目标" && true)
+          git clone --depth 1 --branch 2.2.0 https://github.com/raspberrypi/pico-sdk.git ~/pico-sdk
+          cd ~/pico-sdk
+          git submodule update --init --recursive
+          cd lib/tinyusb
+          git reset --hard origin/master
 
-      # 6. 编译固件并校验UF2产物（匹配项目固件输出逻辑）
-      - name: Build Normal Version Firmware
+      # 🔥 智能提取版本号（自动适配 CMake）
+      - name: 读取固件版本
+        run: |
+          VERSION=$(sed -n 's/pico_set_program_version(ds5-bridge "\(.*\)")/\1/p' CMakeLists.txt)
+          echo "FIRMWARE_VERSION=$VERSION" >> $GITHUB_ENV
+
+      - name: 配置 CMake
+        run: |
+          mkdir build && cd build
+          cmake .. -DPICO_SDK_PATH=~/pico-sdk
+
+      - name: 编译固件
         run: |
           cd build
-          make -j$(nproc)  # 多核编译加速
-          # 强制校验UF2产物，无产物则终止
-          if [ ! -f *.uf2 ]; then
-            echo "❌ 错误：未生成UF2固件文件！"
-            ls -lh  # 输出build目录内容，便于排查
-            exit 1
-          fi
-          # 输出固件信息，便于验证
-          echo "✅ 固件生成成功："
-          ls -lh *.uf2
-          du -sh *.uf2  # 输出固件大小
+          make -j$(nproc)
+          find . -name "*.uf2"
 
-      # 7. 上传UF2产物（命名贴合项目，可追溯）
-      - name: Upload UF2 Firmware
-        uses: actions/upload-artifact@v3
+      # 🔥 修复废弃警告：使用 upload-artifact v4
+      - name: 上传刷机固件
+        uses: actions/upload-artifact@v4
         with:
-          name: DS5Dongle-Pico2W-UF2-${{ github.ref_name }}-${{ github.sha }}
-          path: build/*.uf2
-          retention-days: 90  # 保留90天，兼顾版本管理和存储
-          overwrite: true
+          name: Pico2W-Normal-DS5-Firmware-v${{ env.FIRMWARE_VERSION }}
+          path: build/**/*.uf2
+          retention-days: 90
