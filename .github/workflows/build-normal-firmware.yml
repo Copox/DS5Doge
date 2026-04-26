@@ -17,41 +17,46 @@ jobs:
       - name: 清理环境
         run: rm -rf build
 
-      - name: 安装编译依赖
+      - name: 安装完整编译依赖
         run: |
           sudo apt update
           sudo apt install -y build-essential g++ cmake git python3 \
             gcc-arm-none-eabi libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib
 
-      - name: 初始化 Pico SDK + 最新 tinyusb
+      # 🔥 核心：使用项目要求的 Pico SDK 2.2.0 版本 + 更新 tinyusb
+      - name: 初始化 Pico SDK 2.2.0
         run: |
-          git clone --depth 1 https://github.com/raspberrypi/pico-sdk.git ~/pico-sdk
+          # 克隆项目要求的 SDK 2.2.0 版本
+          git clone --depth 1 --branch 2.2.0 https://github.com/raspberrypi/pico-sdk.git ~/pico-sdk
           cd ~/pico-sdk
           git submodule update --init --recursive
+          
+          # 按项目要求更新 tinyusb 到最新版
           cd lib/tinyusb
+          git fetch origin
           git reset --hard origin/master
 
-      # 🔥 核心：开启SDK原生自动生成UF2，无需任何手动转换
+      # 🔥 精准适配：完全按照项目 CMakeLists.txt 配置，不添加多余参数
       - name: 配置 CMake
         run: |
           mkdir build && cd build
-          cmake .. \
-            -DPICO_SDK_PATH=~/pico-sdk \
-            -DPICO_BOARD=pico2_w \
-            -DPICO_NO_PICOTOOL=ON \
-            -DPICO_DEFAULT_UF2=ON
+          cmake .. -DPICO_SDK_PATH=~/pico-sdk
 
       - name: 编译固件
         run: |
           cd build
           make -j$(nproc)
-          # 查看自动生成的UF2（SDK直接输出，100%存在）
-          ls -lh *.uf2
+          
+          # 🔥 查看所有生成的文件（确认UF2存在）
+          echo "=== 构建产物 ==="
+          ls -lh
+          echo "=== 所有子目录 ==="
+          find . -type f -name "*.uf2" -o -name "*.elf"
 
-      # 上传固件（SDK自动生成，路径固定）
+      # 🔥 上传所有找到的 UF2 文件
       - name: 上传刷机固件
         uses: actions/upload-artifact@v4
         with:
-          name: Pico2W-Normal-Firmware
-          path: build/*.uf2
+          name: Pico2W-Normal-DS5-Firmware
+          path: build/**/*.uf2
           retention-days: 90
