@@ -1,9 +1,9 @@
-name: Build DS5Dongle (Branch Build-Firmware)
+name: Build DS5Dongle (Official Submodule Version)
 
 on:
   push:
-    branches: [ build-firmware ] # 仅在该分支提交时触发
-  workflow_dispatch: # 允许手动点击运行
+    branches: [ build-firmware ]
+  workflow_dispatch:
 
 jobs:
   build:
@@ -13,30 +13,28 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
-          submodules: recursive # 拉取 WDL 等已有的子模块
+          # 关键优化：现在包含 Opus 了，递归拉取所有已定义的子模块
+          submodules: recursive
 
-      # 1. 强行补全作者漏掉的 lib/opus
-      - name: Fetch Opus Library
-        run: |
-          mkdir -p lib/opus
-          git clone --depth 1 https://github.com/xiph/opus.git lib/opus
-
-      # 2. 安装交叉编译工具链
       - name: Install Toolchain
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake gcc-arm-none-eabi libnewlib-arm-none-eabi build-essential libstdc++-arm-none-eabi-newlib python3
 
-      # 3. 配置 Pico SDK 2.2.0 并升级内部 TinyUSB
-      - name: Setup Pico SDK 2.2.0 & Upgrade TinyUSB
+      # 自动修复超频参数：基于你的反馈，默认降频到 250MHz 以确保启动兼容性
+      - name: Patch Overclocking for Stability
         run: |
-          # 克隆指定版本 2.2.0
+          sed -i 's/set_sys_clock_khz(270000, true)/set_sys_clock_khz(250000, true)/g' src/main.cpp
+          # 可选：如果 250MHz 仍不稳，可取消下行注释升压至 1.25V
+          # sed -i 's/VREG_VOLTAGE_1_20/VREG_VOLTAGE_1_25/g' src/main.cpp
+
+      - name: Setup Pico SDK 2.2.0 & Latest TinyUSB
+        run: |
           git clone --depth 1 --branch 2.2.0 https://github.com/raspberrypi/pico-sdk.git
           cd pico-sdk
           git submodule update --init
           
-          # 进入 SDK 内部的 tinyusb 目录并强制升级到 master
-          echo "Upgrading internal TinyUSB to latest master..."
+          # 遵照作者建议：升级 SDK 内部的 TinyUSB 到最新 master
           cd lib/tinyusb
           git fetch origin master
           git checkout origin/master
@@ -44,20 +42,17 @@ jobs:
           cd ../..
           echo "PICO_SDK_PATH=$PWD" >> $GITHUB_ENV
 
-      # 4. 执行编译
       - name: Configure and Build
         run: |
           mkdir build
           cd build
-          # 指定开发板为 pico2_w (RP2350)
           cmake .. -DPICO_BOARD=pico2_w -DCMAKE_BUILD_TYPE=Release
           make -j$(nproc)
 
-      # 5. 上传生成的固件
-      - name: Upload Firmware
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ds5-bridge-firmware-v0.5.0
+          name: ds5-dongle-v0.5.0-firmware
           path: |
             build/*.uf2
             build/*.elf
