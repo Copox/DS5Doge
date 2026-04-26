@@ -25,13 +25,13 @@ jobs:
       - name: Overclock to 270MHz with Increased Voltage
         run: |
           # 1. 强制将电压提升至 1.30V，为高频提供动力
-          sed -i 's/VREG_VOLTAGE_1_20/VREG_VOLTAGE_1_30/g' src/main.cpp
+          # sed -i 's/VREG_VOLTAGE_1_20/VREG_VOLTAGE_1_30/g' src/main.cpp
           
           # 2. 恢复作者的 270MHz 频率
-          sed -i 's/270000/270000/g' src/main.cpp # 确保匹配正确
+          # sed -i 's/270000/270000/g' src/main.cpp # 确保匹配正确
           
           # 3. 建议稍微增加启动自检延迟，确保 PLL 锁定
-          sed -i 's/sleep_ms(1000)/sleep_ms(1500)/g' src/main.cpp
+          # sed -i 's/sleep_ms(1000)/sleep_ms(1500)/g' src/main.cpp
 
       - name: Setup Pico SDK 2.2.0 & Latest TinyUSB
         run: |
