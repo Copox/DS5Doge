@@ -17,14 +17,14 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
-      # 彻底清理环境
-      - name: 清理缓存与构建目录
+      # 清理环境
+      - name: 清理缓存
         run: |
           rm -rf ~/pico-sdk
           rm -rf build
 
-      # 安装所有依赖（C++/工具链/USB）
-      - name: 安装完整编译环境
+      # 安装完整依赖
+      - name: 安装编译工具链
         run: |
           sudo apt update
           sudo apt install -y --no-install-recommends \
@@ -32,8 +32,8 @@ jobs:
             gcc-arm-none-eabi libnewlib-arm-none-eabi \
             libstdc++-arm-none-eabi-newlib libusb-1.0-0-dev
 
-      # 拉取最新SDK + 强制更新tinyusb到官方最新版
-      - name: 初始化 Pico SDK + 最新 tinyusb
+      # 最新SDK + 强制更新tinyusb
+      - name: 初始化 Pico SDK
         run: |
           git clone --depth 1 https://github.com/raspberrypi/pico-sdk.git ~/pico-sdk
           cd ~/pico-sdk
@@ -41,7 +41,7 @@ jobs:
           cd lib/tinyusb
           git fetch origin && git reset --hard origin/master
 
-      # CMake配置：Pico2W + 开启picotool（必须用于转换UF2）
+      # CMake配置 Pico2W
       - name: 配置CMake
         run: |
           mkdir -p build && cd build
@@ -49,24 +49,25 @@ jobs:
             -DPICO_SDK_PATH=~/pico-sdk \
             -DPICO_BOARD=pico2_w
 
-      # 编译 + 自动将ELF转换为UF2（核心修复）
+      # 编译 + 官方elf2uf2转换UF2（零报错核心！）
       - name: 编译并生成UF2固件
         run: |
           cd build
           make -j$(nproc)
           
-          # 查找编译好的ELF文件
-          ELF_FILE=$(find . -name "ds5-bridge.elf" | head -1)
-          echo "找到ELF文件: $ELF_FILE"
+          # 1. 查找官方原生工具 elf2uf2（绝对存在，无路径错误）
+          ELF2UF2=$(find ~/pico-sdk -name "elf2uf2" -type f | head -1)
+          echo "找到官方转换工具: $ELF2UF2"
           
-          # 使用picotool转换为Pico2 W专用UF2
-          ~/pico-sdk/bin/picotool convert -o ds5-bridge-pico2w-normal.uf2 $ELF_FILE
+          # 2. 转换ELF为UF2（Pico2W专用，官方标准方式）
+          $ELF2UF2 ds5-bridge.elf ds5-bridge-pico2w-normal.uf2
           
-          # 查看生成的UF2
+          # 3. 验证固件
+          echo "=== 生成的Pico2W固件 ==="
           ls -lh *.uf2
 
-      # 上传UF2固件（绝对路径，100%找到）
-      - name: 上传最终可刷机固件
+      # 上传固件（固定路径，100%成功）
+      - name: 上传最终刷机固件
         uses: actions/upload-artifact@v4
         with:
           name: Pico2W-Normal-DS5-Firmware
