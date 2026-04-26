@@ -8,6 +8,7 @@
 #include "utils.h"
 #include "resample.h"
 #include "audio.h"
+#include "hardware/clocks.h"
 #include "pico/cyw43_arch.h"
 
 int reportSeqCounter = 0;
@@ -34,6 +35,9 @@ void interrupt_loop() {
 void on_bt_data(CHANNEL_TYPE channel, uint8_t *data, uint16_t len) {
     // printf("[Main] BT data callback: channel=%u len=%u\n", channel, len);
     if (channel == INTERRUPT && data[1] == 0x31) {
+        if ((data[56] & 1) != (interrupt_in_data[53] & 1)) {
+            set_headset(data[56] & 1);
+        }
         memcpy(interrupt_in_data, data + 3, 63);
     }
 }
@@ -84,6 +88,7 @@ void tud_hid_set_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t rep
 }
 
 int main() {
+    set_sys_clock_khz(270000, true);
     board_init();
 
     tusb_rhport_init_t dev_init = {
@@ -91,6 +96,8 @@ int main() {
         .speed = TUSB_SPEED_AUTO
     };
     tusb_init(BOARD_TUD_RHPORT, &dev_init);
+
+    tud_disconnect();
 
     board_init_after_tusb();
 

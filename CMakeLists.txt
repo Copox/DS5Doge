@@ -46,16 +46,22 @@ add_executable(ds5-bridge
         src/bt.cpp
 )
 
+# Cockos WDLResampler
 add_library(wdl_resampler STATIC
         lib/WDL/WDL/resample.cpp
 )
-
 target_include_directories(wdl_resampler PUBLIC
         lib/WDL/WDL
 )
 
+# Opus
+#set(OPUS_FIXED_POINT ON)
+add_subdirectory(lib/opus)
+
 target_compile_options(wdl_resampler PRIVATE -fsigned-char)
 target_compile_options(ds5-bridge PRIVATE -fsigned-char)
+target_compile_options(wdl_resampler PRIVATE -DWDL_RESAMPLE_TYPE=float)
+target_compile_options(ds5-bridge PRIVATE -DWDL_RESAMPLE_TYPE=float)
 #target_compile_options(ds5-bridge PRIVATE -DENABLE_DSE) # 将PID和产品名称设置为DSE
 target_compile_definitions(ds5-bridge PRIVATE
         CYW43_LWIP=0
@@ -63,17 +69,11 @@ target_compile_definitions(ds5-bridge PRIVATE
 )
 
 pico_set_program_name(ds5-bridge "ds5-bridge")
-pico_set_program_version(ds5-bridge "0.3.2")
+pico_set_program_version(ds5-bridge "0.5.0")
 
 # Modify the below lines to enable/disable output over UART/USB
 pico_enable_stdio_uart(ds5-bridge 1)
 pico_enable_stdio_usb(ds5-bridge 0)
-
-# Add the standard library to the build
-target_link_libraries(ds5-bridge
-        pico_stdlib
-        pico_multicore
-)
 
 # Add the standard include files to the build
 #target_include_directories(ds5-bridge PRIVATE
@@ -86,6 +86,8 @@ target_include_directories(${PROJECT_NAME} PUBLIC
 
 # Add any user requested libraries
 target_link_libraries(ds5-bridge
+        pico_stdlib
+        pico_multicore
         hardware_interp
         hardware_timer
         pico_btstack_classic
@@ -95,6 +97,7 @@ target_link_libraries(ds5-bridge
         tinyusb_device
         tinyusb_board
         wdl_resampler
+        opus
 )
 
 pico_add_extra_outputs(ds5-bridge)
