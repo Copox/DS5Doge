@@ -9,29 +9,28 @@ jobs:
   build-firmware:
     runs-on: ubuntu-22.04
     steps:
-      - name: 检出代码
+      - name: 检出项目代码
         uses: actions/checkout@v4
         with:
           submodules: recursive
           fetch-depth: 0
 
+      # 🔥 核心修复：自动克隆 Opus 官方源码（解决 opus.h 缺失）
+      - name: 自动补齐 Opus 依赖库
+        run: |
+          git clone --depth 1 --branch v1.5.2 https://github.com/xiph/opus.git lib/opus
+          echo "✅ Opus 库已自动添加到 lib/opus"
+
       - name: 清理构建目录
         run: rm -rf build
 
-      # 🔥 自动修复：注释无效的 Opus 配置（不修改你的源码）
-      - name: 修复 CMake 依赖错误
-        run: |
-          sed -i 's/add_subdirectory(lib\/opus)/#add_subdirectory(lib\/opus)/g' CMakeLists.txt
-          sed -i 's/opus$/#opus/g' CMakeLists.txt
-
-      - name: 安装编译依赖
+      - name: 安装交叉编译依赖
         run: |
           sudo apt update
-          sudo apt install -y build-essential g++ cmake git python3 \
+          sudo apt install -y build-essential g++ cmake git \
             gcc-arm-none-eabi libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib
 
-      # 🔥 使用项目指定的 Pico SDK 2.2.0 + 强制更新 tinyusb
-      - name: 初始化 Pico SDK
+      - name: 初始化 Pico SDK 2.2.0 + 强制更新 tinyusb 最新版
         run: |
           git clone --depth 1 --branch 2.2.0 https://github.com/raspberrypi/pico-sdk.git ~/pico-sdk
           cd ~/pico-sdk
@@ -39,27 +38,29 @@ jobs:
           cd lib/tinyusb
           git reset --hard origin/master
 
-      # 🔥 智能提取版本号（自动适配 CMake）
+      # 🔥 智能提取版本号（自动适配 CMakeLists.txt）
       - name: 读取固件版本
         run: |
-          VERSION=$(sed -n 's/pico_set_program_version(ds5-bridge "\(.*\)")/\1/p' CMakeLists.txt)
-          echo "FIRMWARE_VERSION=$VERSION" >> $GITHUB_ENV
+          VER=$(sed -n 's/pico_set_program_version(ds5-bridge "\(.*\)")/\1/p' CMakeLists.txt)
+          echo "VERSION=$VER" >> $GITHUB_ENV
+          echo "当前固件版本：v$VER"
 
-      - name: 配置 CMake
+      - name: CMake 配置
         run: |
           mkdir build && cd build
           cmake .. -DPICO_SDK_PATH=~/pico-sdk
 
-      - name: 编译固件
+      - name: 编译固件（全自动生成 UF2）
         run: |
           cd build
           make -j$(nproc)
+          echo "=== 查找生成的固件 ==="
           find . -name "*.uf2"
 
-      # 🔥 修复废弃警告：使用 upload-artifact v4
-      - name: 上传刷机固件
+      # 🔥 上传固件（v4 版本，无废弃警告）
+      - name: 上传 Pico2 W 专用固件
         uses: actions/upload-artifact@v4
         with:
-          name: Pico2W-Normal-DS5-Firmware-v${{ env.FIRMWARE_VERSION }}
+          name: Pico2W-Normal-Firmware-v${{ env.VERSION }}
           path: build/**/*.uf2
           retention-days: 90
