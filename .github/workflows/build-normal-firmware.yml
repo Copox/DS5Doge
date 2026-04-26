@@ -23,31 +23,30 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
-      # 重置缓存，保证tinyusb是最新版
-      - name: 清理旧缓存
+      # 清理旧缓存，保证环境干净
+      - name: 清理缓存
         run: rm -rf ~/pico-sdk
 
-      # 安装编译依赖
-      - name: 安装编译工具链
+      # ✅ 核心修复：安装完整C/C++编译依赖（解决 <new> 报错）
+      - name: 安装完整编译工具链
         run: |
           sudo apt update
           sudo apt install -y --no-install-recommends \
-            build-essential cmake git python3 \
+            build-essential g++ cmake git python3 \
             gcc-arm-none-eabi libnewlib-arm-none-eabi \
-            libusb-1.0-0-dev
+            libstdc++-arm-none-eabi-newlib libusb-1.0-0-dev
 
-      # 拉取最新SDK + 【强制更新tinyusb到官方最新版】
-      - name: 初始化 Pico SDK + 最新版 tinyusb
+      # 拉取最新SDK + 强制更新tinyusb到官方最新版
+      - name: 初始化 Pico SDK + 最新 tinyusb
         run: |
           git clone --depth 1 https://github.com/raspberrypi/pico-sdk.git ~/pico-sdk
           cd ~/pico-sdk
           git submodule update --init --recursive
           
-          # 🔥 核心：强制将 tinyusb 更新到官方最新 master 版（无残留、无冲突）
+          # 强制更新 tinyusb 到最新主线版
           cd ~/pico-sdk/lib/tinyusb
           git fetch origin
           git reset --hard origin/master
-          git status
 
       # CMake配置：Pico2W + 禁用picotool + 普通版固件
       - name: 配置编译环境
@@ -58,15 +57,15 @@ jobs:
             -DPICO_BOARD=pico2_w \
             -DPICO_NO_PICOTOOL=ON
 
-      # 编译固件
-      - name: 编译 Pico2 W 普通版固件
+      # 编译固件（默认普通版，无DSE）
+      - name: 编译 Pico2 W 固件
         run: |
           cd build
           make -j$(nproc)
           ls -lh *.uf2
 
-      # 上传固件
-      - name: 上传最终固件
+      # 上传最终可刷机固件
+      - name: 上传普通版固件
         uses: actions/upload-artifact@v4
         with:
           name: Pico2W-Normal-Firmware
