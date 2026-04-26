@@ -22,13 +22,13 @@ jobs:
           sudo apt-get install -y cmake gcc-arm-none-eabi libnewlib-arm-none-eabi build-essential libstdc++-arm-none-eabi-newlib python3
 
       # 自动修复超频参数：基于你的反馈，默认降频到 250MHz 以确保启动兼容性
-      - name: Overclock to 270MHz with Increased Voltage
+      - name: Patch Overclocking for Stability
         run: |
-          # 1. 强制将电压提升至 1.30V，为高频提供动力
+          # 1. 调教默认电压
           # sed -i 's/VREG_VOLTAGE_1_20/VREG_VOLTAGE_1_30/g' src/main.cpp
           
-          # 2. 恢复作者的 270MHz 频率
-          # sed -i 's/270000/270000/g' src/main.cpp # 确保匹配正确
+          # 2. 调教默认频率
+          sed -i 's/set_sys_clock_khz(270000, true)/set_sys_clock_khz(250000, true)/g' src/main.cpp
           
           # 3. 建议稍微增加启动自检延迟，确保 PLL 锁定
           # sed -i 's/sleep_ms(1000)/sleep_ms(1500)/g' src/main.cpp
