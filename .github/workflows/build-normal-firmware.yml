@@ -1,6 +1,6 @@
 name: 构建 Pico2 W 普通版 DS5 固件
 
-# 严格限定：仅 build-firmware 分支触发，支持手动触发
+# 严格限定仅 build-firmware 分支触发，支持手动触发
 on:
   push:
     branches: [ build-firmware ]
@@ -17,54 +17,59 @@ jobs:
   build-pico2w-firmware:
     runs-on: ubuntu-22.04
     steps:
-      - name: 检出代码
+      # 1. 检出 build-firmware 分支代码
+      - name: 检出项目代码
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.inputs.branch || github.ref_name }}
           submodules: recursive
           fetch-depth: 0
 
-      # 缓存SDK，大幅加速构建
+      # 2. 缓存 SDK 加速构建
       - name: 缓存 Pico SDK
         uses: actions/cache@v4
         with:
           path: ~/pico-sdk
-          key: ${{ runner.os }}-pico-sdk-${{ github.ref_name }}
+          key: ${{ runner.os }}-pico-sdk-master-${{ github.ref_name }}
 
-      # 安装编译工具链
-      - name: 安装依赖
+      # 3. 安装编译依赖
+      - name: 安装编译工具链
         run: |
           sudo apt update
           sudo apt install -y --no-install-recommends \
             build-essential cmake git python3 \
             gcc-arm-none-eabi libnewlib-arm-none-eabi
 
-      # 初始化SDK
-      - name: 初始化 Pico SDK
+      # 4. 拉取【最新版Pico SDK】(master分支，原生支持Pico2 W)
+      - name: 初始化 Pico SDK (支持Pico2 W)
         run: |
           if [ ! -d ~/pico-sdk ]; then
-            git clone --depth 1 --branch 1.5.1 https://github.com/raspberrypi/pico-sdk.git ~/pico-sdk
-            cd ~/pico-sdk && git submodule update --init
+            # 关键修复：使用master分支，放弃旧版1.5.1
+            git clone --depth 1 https://github.com/raspberrypi/pico-sdk.git ~/pico-sdk
+            cd ~/pico-sdk && git submodule update --init --recursive
           fi
+          # 更新tinyusb（项目要求）
           cd ~/pico-sdk/lib/tinyusb && git pull origin master
 
-      # 关键：强制指定为 PICO2 W 开发板 + 默认编译(普通版，DSE已注释)
-      - name: CMake 配置 (Pico2 W 专属)
+      # 5. CMake配置：指定Pico2 W + 默认编译(普通版，DSE已注释)
+      - name: 配置编译环境
         run: |
           mkdir -p build && cd build
           cmake .. \
             -DPICO_SDK_PATH=~/pico-sdk \
             -DPICO_BOARD=pico2_w
 
-      # 编译固件
-      - name: 编译普通版固件
+      # 6. 编译固件（纯普通版，无DSE）
+      - name: 编译 Pico2 W 普通版固件
         run: |
           cd build
           make -j$(nproc)
+          # 验证固件生成
+          echo "=== 生成的 Pico2 W 固件 ==="
           ls -lh *.uf2
 
-      # 上传固件
-      - name: 上传 Pico2 W 固件
+      # 7. 上传固件（可直接下载刷机）
+      - name: 上传固件
         uses: actions/upload-artifact@v4
         with:
           name: Pico2W-Normal-Firmware-${{ github.sha }}
