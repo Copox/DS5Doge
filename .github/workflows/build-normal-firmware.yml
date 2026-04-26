@@ -6,11 +6,6 @@ on:
   pull_request:
     branches: [ build-firmware ]
   workflow_dispatch:
-    inputs:
-      branch:
-        description: 构建分支
-        required: true
-        default: build-firmware
 
 jobs:
   build-firmware:
@@ -19,18 +14,17 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.branch || github.ref_name }}
           submodules: recursive
           fetch-depth: 0
 
-      # 清理旧缓存/构建文件
-      - name: 清理环境
+      # 彻底清理环境
+      - name: 清理缓存与构建目录
         run: |
           rm -rf ~/pico-sdk
           rm -rf build
 
-      # 安装完整编译依赖（修复C++/USB/工具链所有问题）
-      - name: 安装编译工具链
+      # 安装所有依赖（C++/工具链/USB）
+      - name: 安装完整编译环境
         run: |
           sudo apt update
           sudo apt install -y --no-install-recommends \
@@ -38,46 +32,43 @@ jobs:
             gcc-arm-none-eabi libnewlib-arm-none-eabi \
             libstdc++-arm-none-eabi-newlib libusb-1.0-0-dev
 
-      # 最新SDK + 强制更新tinyusb到官方最新版
+      # 拉取最新SDK + 强制更新tinyusb到官方最新版
       - name: 初始化 Pico SDK + 最新 tinyusb
         run: |
           git clone --depth 1 https://github.com/raspberrypi/pico-sdk.git ~/pico-sdk
           cd ~/pico-sdk
           git submodule update --init --recursive
-          
-          # 强制更新 tinyusb
-          cd ~/pico-sdk/lib/tinyusb
-          git fetch origin
-          git reset --hard origin/master
+          cd lib/tinyusb
+          git fetch origin && git reset --hard origin/master
 
-      # CMake配置（Pico2W + 禁用picotool + 普通版固件）
-      - name: 配置编译环境
+      # CMake配置：Pico2W + 开启picotool（必须用于转换UF2）
+      - name: 配置CMake
         run: |
           mkdir -p build && cd build
           cmake .. \
             -DPICO_SDK_PATH=~/pico-sdk \
-            -DPICO_BOARD=pico2_w \
-            -DPICO_NO_PICOTOOL=ON
+            -DPICO_BOARD=pico2_w
 
-      # 编译固件 + 自动查找UF2文件（核心修复！）
-      - name: 编译 Pico2 W 普通版固件
+      # 编译 + 自动将ELF转换为UF2（核心修复）
+      - name: 编译并生成UF2固件
         run: |
           cd build
           make -j$(nproc)
           
-          # 🔥 修复：全局查找所有UF2固件文件（解决路径找不到问题）
-          echo "=== 查找生成的 UF2 固件 ==="
-          find . -name "*.uf2" | head -10
+          # 查找编译好的ELF文件
+          ELF_FILE=$(find . -name "ds5-bridge.elf" | head -1)
+          echo "找到ELF文件: $ELF_FILE"
           
-          # 列出所有构建产物（方便排查）
-          echo "=== 构建完成的所有文件 ==="
-          ls -lh
+          # 使用picotool转换为Pico2 W专用UF2
+          ~/pico-sdk/bin/picotool convert -o ds5-bridge-pico2w-normal.uf2 $ELF_FILE
+          
+          # 查看生成的UF2
+          ls -lh *.uf2
 
-      # 上传所有子目录下的UF2固件（100%捕获）
-      - name: 上传最终固件
+      # 上传UF2固件（绝对路径，100%找到）
+      - name: 上传最终可刷机固件
         uses: actions/upload-artifact@v4
         with:
-          name: Pico2W-Normal-Firmware
-          # 递归查找build下所有UF2文件，无视路径
-          path: build/**/*.uf2
+          name: Pico2W-Normal-DS5-Firmware
+          path: build/ds5-bridge-pico2w-normal.uf2
           retention-days: 90
