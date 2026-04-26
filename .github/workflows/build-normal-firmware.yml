@@ -1,0 +1,75 @@
+name: 构建普通版 DS5 固件 (Pico2W)
+
+# 触发规则：仅在 build-firmware 分支生效，支持手动触发
+on:
+  push:
+    branches: [ build-firmware ]
+  pull_request:
+    branches: [ build-firmware ]
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: '构建分支'
+        required: true
+        default: 'build-firmware'
+        type: string
+
+jobs:
+  build-firmware:
+    runs-on: ubuntu-22.04  # 最稳定的系统版本
+    steps:
+      # 1. 检出代码（仅 build-firmware 分支，拉取子模块）
+      - name: 检出项目代码
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.branch || github.ref_name }}
+          submodules: recursive
+          fetch-depth: 0
+
+      # 2. 缓存 Pico SDK（大幅加速构建，避免重复下载）
+      - name: 缓存 Pico SDK
+        uses: actions/cache@v4
+        with:
+          path: ~/pico-sdk
+          key: ${{ runner.os }}-pico-sdk-${{ github.ref_name }}
+          restore-keys: ${{ runner.os }}-pico-sdk-
+
+      # 3. 安装编译依赖（Pico 固件必备工具链）
+      - name: 安装编译环境
+        run: |
+          sudo apt update
+          sudo apt install -y --no-install-recommends \
+            build-essential cmake git python3 \
+            gcc-arm-none-eabi libnewlib-arm-none-eabi
+
+      # 4. 初始化 Pico SDK（缓存命中则跳过下载）
+      - name: 初始化 Pico SDK
+        run: |
+          if [ ! -d ~/pico-sdk ]; then
+            git clone --depth 1 --branch 1.5.1 https://github.com/raspberrypi/pico-sdk.git ~/pico-sdk
+            cd ~/pico-sdk && git submodule update --init
+          fi
+          # 按项目要求更新 tinyusb
+          cd ~/pico-sdk/lib/tinyusb && git pull origin master
+
+      # 5. CMake 配置（默认配置 = 普通版固件，DSE 选项已注释，无需修改）
+      - name: 配置编译环境
+        run: |
+          mkdir -p build && cd build
+          cmake .. -DPICO_SDK_PATH=~/pico-sdk
+
+      # 6. 编译固件（默认直接生成普通版）
+      - name: 编译普通版固件
+        run: |
+          cd build
+          make -j$(nproc)
+          # 验证固件生成
+          ls -lh *.uf2
+
+      # 7. 上传固件（可直接下载刷机）
+      - name: 上传普通版固件
+        uses: actions/upload-artifact@v4
+        with:
+          name: Normal-Firmware-${{ github.sha }}
+          path: build/*.uf2
+          retention-days: 90
