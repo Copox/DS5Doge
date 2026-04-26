@@ -1,6 +1,6 @@
 name: 构建 Pico2 W 普通版 DS5 固件
 
-# 严格限定仅 build-firmware 分支触发，支持手动触发
+# 仅 build-firmware 分支触发
 on:
   push:
     branches: [ build-firmware ]
@@ -14,64 +14,61 @@ on:
         default: build-firmware
 
 jobs:
-  build-pico2w-firmware:
+  build-firmware:
     runs-on: ubuntu-22.04
     steps:
-      # 1. 检出 build-firmware 分支代码
-      - name: 检出项目代码
+      - name: 检出代码
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.inputs.branch || github.ref_name }}
           submodules: recursive
           fetch-depth: 0
 
-      # 2. 缓存 SDK 加速构建
+      # 缓存SDK，加速构建
       - name: 缓存 Pico SDK
         uses: actions/cache@v4
         with:
           path: ~/pico-sdk
-          key: ${{ runner.os }}-pico-sdk-master-${{ github.ref_name }}
+          key: ${{ runner.os }}-pico-sdk-fixed-${{ github.ref_name }}
 
-      # 3. 安装编译依赖
-      - name: 安装编译工具链
+      # 安装完整依赖（修复USB依赖 + 编译工具链）
+      - name: 安装编译依赖
         run: |
           sudo apt update
           sudo apt install -y --no-install-recommends \
             build-essential cmake git python3 \
-            gcc-arm-none-eabi libnewlib-arm-none-eabi
+            gcc-arm-none-eabi libnewlib-arm-none-eabi \
+            libusb-1.0-0-dev  # 修复picotool USB依赖报错
 
-      # 4. 拉取【最新版Pico SDK】(master分支，原生支持Pico2 W)
-      - name: 初始化 Pico SDK (支持Pico2 W)
+      # 拉取最新SDK（支持Pico2 W）
+      - name: 初始化 Pico SDK
         run: |
           if [ ! -d ~/pico-sdk ]; then
-            # 关键修复：使用master分支，放弃旧版1.5.1
             git clone --depth 1 https://github.com/raspberrypi/pico-sdk.git ~/pico-sdk
             cd ~/pico-sdk && git submodule update --init --recursive
           fi
-          # 更新tinyusb（项目要求）
           cd ~/pico-sdk/lib/tinyusb && git pull origin master
 
-      # 5. CMake配置：指定Pico2 W + 默认编译(普通版，DSE已注释)
-      - name: 配置编译环境
+      # ✅ 核心修复：禁用picotool编译 + 指定Pico2 W + 普通版固件
+      - name: CMake 配置
         run: |
           mkdir -p build && cd build
           cmake .. \
             -DPICO_SDK_PATH=~/pico-sdk \
-            -DPICO_BOARD=pico2_w
+            -DPICO_BOARD=pico2_w \
+            -DPICO_NO_PICOTOOL=ON  # 强制禁用picotool，根治报错
 
-      # 6. 编译固件（纯普通版，无DSE）
-      - name: 编译 Pico2 W 普通版固件
+      # 编译固件（默认普通版，DSE已注释）
+      - name: 编译 Pico2 W 固件
         run: |
           cd build
           make -j$(nproc)
-          # 验证固件生成
-          echo "=== 生成的 Pico2 W 固件 ==="
           ls -lh *.uf2
 
-      # 7. 上传固件（可直接下载刷机）
-      - name: 上传固件
+      # 上传最终固件
+      - name: 上传普通版固件
         uses: actions/upload-artifact@v4
         with:
-          name: Pico2W-Normal-Firmware-${{ github.sha }}
+          name: Pico2W-Normal-Firmware
           path: build/*.uf2
           retention-days: 90
