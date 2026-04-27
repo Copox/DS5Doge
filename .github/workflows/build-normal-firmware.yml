@@ -28,7 +28,7 @@ jobs:
           # sed -i 's/VREG_VOLTAGE_1_20/VREG_VOLTAGE_1_30/g' src/main.cpp
           
           # 2. 调教默认频率
-          sed -i 's/set_sys_clock_khz(270000, true)/set_sys_clock_khz(260000, true)/g' src/main.cpp
+          # sed -i 's/set_sys_clock_khz(270000, true)/set_sys_clock_khz(260000, true)/g' src/main.cpp
           
           # 3. 建议稍微增加启动自检延迟，确保 PLL 锁定
           # sed -i 's/sleep_ms(1000)/sleep_ms(1500)/g' src/main.cpp
