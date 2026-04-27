@@ -52,9 +52,9 @@ jobs:
         if: env.APPLY_PATCH == 'true'
         run: |
           # 仅修改 main.cpp 以确保安全
-          sed -i "s/set_sys_clock_khz([0-9]*, true)/set_sys_clock_khz(${{ env.TARGET_FREQ }}, true)/g" src/main.cpp
           sed -i "s/vreg_set_voltage(VREG_VOLTAGE_[0-9_]*)/vreg_set_voltage(VREG_VOLTAGE_${{ env.TARGET_VOLT }})/g" src/main.cpp
           sed -i "s/sleep_ms([0-9]*)/sleep_ms(${{ env.BOOT_DELAY }})/g" src/main.cpp
+          sed -i "s/set_sys_clock_khz([0-9]*, true)/set_sys_clock_khz(${{ env.TARGET_FREQ }}, true)/g" src/main.cpp
 
       - name: Configure and Build
         run: |
