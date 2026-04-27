@@ -5,13 +5,11 @@ on:
     branches: [ "build-firmware" ]
 
 env:
-  # ================= 自定义配置区域 =================
-  APPLY_PATCH: "false"                
-  TARGET_FREQ: "260000"              
-  TARGET_VOLT: "1_20"                
-  BOOT_DELAY: "1000"                 
-  PICO_SDK_VERSION: "2.2.0"          
-  # =================================================
+  APPLY_PATCH: "false"
+  TARGET_FREQ: "270000"
+  TARGET_VOLT: "1_20"
+  BOOT_DELAY: "1000"
+  PICO_SDK_VERSION: "2.2.0"
 
 jobs:
   build:
@@ -24,40 +22,36 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
-      - name: Update Submodules
-        run: git submodule update --init --recursive
-
       - name: Install Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake gcc-arm-none-eabi libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib python3
 
-      - name: Set up Pico SDK
+      - name: Set up Pico SDK & Force Update TinyUSB
         run: |
+          # 1. 克隆完整的 SDK (包含蓝牙等组件)
           git clone --depth 1 --branch ${{ env.PICO_SDK_VERSION }} https://github.com/raspberrypi/pico-sdk.git $HOME/pico-sdk
+          cd $HOME/pico-sdk
+          git submodule update --init --recursive
+          
+          # 2. 核心操作：删除 SDK 自带的旧版 TinyUSB，强行替换为官方最新 master 版
+          rm -rf lib/tinyusb
+          git clone --depth 1 https://github.com/hathach/tinyusb.git lib/tinyusb
+          
           echo "PICO_SDK_PATH=$HOME/pico-sdk" >> $GITHUB_ENV
-
-      - name: Set up Latest TinyUSB
-        run: |
-          git clone --depth 1 https://github.com/hathach/tinyusb.git $HOME/tinyusb
-          echo "PICO_TINYUSB_PATH=$HOME/tinyusb" >> $GITHUB_ENV
+          echo "SDK's TinyUSB has been force-upgraded to latest master."
 
       - name: Dynamically Extract Version
         id: get_version
         run: |
-          # 核心改进：无论括号里是什么数字，只抓取引号内的内容
-          # 匹配模式：寻找包含 pico_set_program_version 的行，提取第二个引号对中的内容
-          RAW_VER=$(grep "pico_set_program_version" CMakeLists.txt | head -n 1 | sed 's/.*"\(.*\)".*/\1/')
-          
-          # 如果提取失败（例如作者改了格式），则给个默认值防止脚本崩溃
-          if [ -z "$RAW_VER" ]; then RAW_VER="unknown"; fi
-          
-          echo "VER=$RAW_VER" >> $GITHUB_ENV
-          echo "Successfully detected version from CMakeLists: $RAW_VER"
+          VERSION=$(grep "pico_set_program_version" CMakeLists.txt | head -n 1 | sed 's/.*"\(.*\)".*/\1/')
+          if [ -z "$VERSION" ]; then VERSION="unknown"; fi
+          echo "VER=$VERSION" >> $GITHUB_ENV
 
       - name: Regex Patch Source Code
         if: env.APPLY_PATCH == 'true'
         run: |
+          # 仅修改 main.cpp 以确保安全
           sed -i "s/set_sys_clock_khz([0-9]*, true)/set_sys_clock_khz(${{ env.TARGET_FREQ }}, true)/g" src/main.cpp
           sed -i "s/vreg_set_voltage(VREG_VOLTAGE_[0-9_]*)/vreg_set_voltage(VREG_VOLTAGE_${{ env.TARGET_VOLT }})/g" src/main.cpp
           sed -i "s/sleep_ms([0-9]*)/sleep_ms(${{ env.BOOT_DELAY }})/g" src/main.cpp
@@ -65,13 +59,13 @@ jobs:
       - name: Configure and Build
         run: |
           mkdir build && cd build
+          # 现在不需要额外指定 PICO_TINYUSB_PATH 了，因为它就在 SDK 默认路径里
           cmake -DPICO_BOARD=pico2_w ..
           make -j$(nproc)
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          # 文件名会根据动态抓取的 VER 变量自动重命名
           name: >-
             ${{ env.APPLY_PATCH == 'true' 
                 && format('ds5-v{0}-{1}-{2}', env.VER, env.TARGET_FREQ, env.TARGET_VOLT) 
