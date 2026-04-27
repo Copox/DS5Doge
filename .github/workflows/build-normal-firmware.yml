@@ -1,7 +1,9 @@
 name: Build Custom Pico 2W Firmware (Manual Only)
 
 on:
-  workflow_dispatch: # 仅手动点击 Actions 页面运行
+  push:
+    # 只要你推送到以下分支，就会自动触发编译
+    branches: [ "build-firmware" ]
 
 env:
   # ================= 自定义配置区域 =================
