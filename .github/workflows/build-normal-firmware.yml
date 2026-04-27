@@ -1,9 +1,16 @@
-name: Build DS5Dongle (Official Submodule Version)
+name: Build Custom Pico 2W Firmware (Manual Only)
 
 on:
-  push:
-    branches: [ build-firmware ]
-  workflow_dispatch:
+  workflow_dispatch: # 仅手动点击 Actions 页面运行
+
+env:
+  # ================= 自定义配置区域 =================
+  APPLY_PATCH: "false"                # 设置为 "true" 应用以下补丁，"false" 则使用源码默认值
+  TARGET_FREQ: "270000"              # 目标频率 (kHz)。请填写完整数值，支持微调 (例如 266000, 272500)
+  TARGET_VOLT: "1_20"                # 目标电压 (填 1_25 即可，脚本自动补全 VREG_VOLTAGE_)
+  BOOT_DELAY: "1000"                 # 启动延迟 (ms)
+  PICO_SDK_VERSION: "2.2.0"          # 锁定的 SDK 版本
+  # =================================================
 
 jobs:
   build:
@@ -13,51 +20,54 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
-          # 关键优化：现在包含 Opus 了，递归拉取所有已定义的子模块
           submodules: recursive
 
-      - name: Install Toolchain
+      - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake gcc-arm-none-eabi libnewlib-arm-none-eabi build-essential libstdc++-arm-none-eabi-newlib python3
+          sudo apt-get install -y cmake gcc-arm-none-eabi libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib python3
 
-      
-      - name: Patch Overclocking for Stability
+      - name: Set up Pico SDK
         run: |
-          # 1. 调教默认电压
-          # sed -i 's/VREG_VOLTAGE_1_20/VREG_VOLTAGE_1_10/g' src/main.cpp
-          
-          # 2. 调教默认频率
-          # sed -i 's/set_sys_clock_khz(320000, true)/set_sys_clock_khz(260000, true)/g' src/main.cpp
-          
-          # 3. 建议稍微增加启动自检延迟，确保 PLL 锁定
-          # sed -i 's/sleep_ms(1000)/sleep_ms(1500)/g' src/main.cpp
+          git clone --depth 1 --branch ${{ env.PICO_SDK_VERSION }} https://github.com/raspberrypi/pico-sdk.git $HOME/pico-sdk
+          echo "PICO_SDK_PATH=$HOME/pico-sdk" >> $GITHUB_ENV
 
-      - name: Setup Pico SDK 2.2.0 & Latest TinyUSB
+      - name: Set up Latest TinyUSB
+        # 无论是否应用源码补丁，通常都建议使用最新的 USB 驱动栈
         run: |
-          git clone --depth 1 --branch 2.2.0 https://github.com/raspberrypi/pico-sdk.git
-          cd pico-sdk
-          git submodule update --init
-          
-          # 遵照作者建议：升级 SDK 内部的 TinyUSB 到最新 master
-          cd lib/tinyusb
-          git fetch origin master
-          git checkout origin/master
-          
-          cd ../..
-          echo "PICO_SDK_PATH=$PWD" >> $GITHUB_ENV
+          git clone --depth 1 https://github.com/hathach/tinyusb.git $HOME/tinyusb
+          echo "PICO_TINYUSB_PATH=$HOME/tinyusb" >> $GITHUB_ENV
+
+      - name: Extract Version
+        id: get_version
+        run: |
+          # 提取版本号，如果没找到则默认 v0.x
+          VERSION=$(grep "pico_set_program_version" CMakeLists.txt | sed 's/.*"\(.*\)".*/\1/' || echo "v0.x")
+          echo "VER=$VERSION" >> $GITHUB_ENV
+
+      - name: Regex Patch Source Code
+        if: env.APPLY_PATCH == 'true'
+        run: |
+          # 频率：直接注入你填写的完整数值，不再自动补全 000
+          sed -i "s/set_sys_clock_khz([0-9]*, true)/set_sys_clock_khz(${{ env.TARGET_FREQ }}, true)/g" src/main.cpp
+          # 电压：继续自动拼接 VREG_VOLTAGE_
+          sed -i "s/vreg_set_voltage(VREG_VOLTAGE_[0-9_]*)/vreg_set_voltage(VREG_VOLTAGE_${{ env.TARGET_VOLT }})/g" src/main.cpp
+          # 延迟
+          sed -i "s/sleep_ms([0-9]*)/sleep_ms(${{ env.BOOT_DELAY }})/g" src/main.cpp
 
       - name: Configure and Build
         run: |
-          mkdir build
-          cd build
-          cmake .. -DPICO_BOARD=pico2_w -DCMAKE_BUILD_TYPE=Release
+          mkdir build && cd build
+          cmake -DPICO_BOARD=pico2_w ..
           make -j$(nproc)
 
-      - name: Upload Artifacts
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ds5-dongle-firmware
+          # 简洁命名示例：ds5-v0.5.0-272500-1_25.uf2
+          name: >-
+            ${{ env.APPLY_PATCH == 'true' 
+                && format('ds5-v{0}-{1}-{2}', env.VER, env.TARGET_FREQ, env.TARGET_VOLT) 
+                || format('ds5-v{0}-original', env.VER) }}
           path: |
             build/*.uf2
-            build/*.elf
