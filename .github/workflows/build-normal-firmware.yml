@@ -69,9 +69,18 @@ jobs:
 
       - name: Apply Patches
         run: |
-          [ "${{ env.CUSTOM_VOLT }}" != "default" ] && sed -i "s/vreg_set_voltage(VREG_VOLTAGE_[0-9_]*)/vreg_set_voltage(VREG_VOLTAGE_${{ env.CUSTOM_VOLT }})/g" src/main.cpp
-          [ "${{ env.CUSTOM_DELAY }}" != "default" ] && sed -i "s/sleep_ms([0-9]*)/sleep_ms(${{ env.CUSTOM_DELAY }})/g" src/main.cpp
-          [ "${{ env.CUSTOM_FREQ }}" != "default" ] && sed -i "s/set_sys_clock_khz([0-9]*, true)/set_sys_clock_khz(${{ env.CUSTOM_FREQ }}, true)/g" src/main.cpp
+          # 只有当变量不是 "default" 时才执行替换
+          if [ "${{ env.CUSTOM_VOLT }}" != "default" ]; then
+            sed -i "s/vreg_set_voltage(VREG_VOLTAGE_[0-9_]*)/vreg_set_voltage(VREG_VOLTAGE_${{ env.CUSTOM_VOLT }})/g" src/main.cpp
+          fi
+          
+          if [ "${{ env.CUSTOM_DELAY }}" != "default" ]; then
+            sed -i "s/sleep_ms([0-9]*)/sleep_ms(${{ env.CUSTOM_DELAY }})/g" src/main.cpp
+          fi
+          
+          if [ "${{ env.CUSTOM_FREQ }}" != "default" ]; then
+            sed -i "s/set_sys_clock_khz([0-9]*, true)/set_sys_clock_khz(${{ env.CUSTOM_FREQ }}, true)/g" src/main.cpp
+          fi
 
       - name: Configure and Build
         run: |
