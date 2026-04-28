@@ -111,7 +111,9 @@ jobs:
       - name: Configure and Build
         run: |
           mkdir build && cd build
+          # 显式传递 PICO_SDK_PATH，确保 CMake 绝对不会迷路
           cmake -DPICO_BOARD=pico2_w \
+                -DPICO_SDK_PATH=$HOME/pico-sdk \
                 -DCMAKE_C_COMPILER=${{ env.COMPILER_PATH }}/arm-none-eabi-gcc \
                 -DCMAKE_CXX_COMPILER=${{ env.COMPILER_PATH }}/arm-none-eabi-g++ \
                 ..
