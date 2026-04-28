@@ -1,4 +1,4 @@
-name: Build Custom Pico 2W Firmware (Auto Trigger)
+name: Build Custom Pico 2W Firmware (Full-Auto Alignment)
 
 on:
   push:
@@ -6,12 +6,14 @@ on:
 
 env:
   # ================= 独立自定义配置区域 =================
-  # 填写具体数值即为“自定义覆盖”，填写 "default" 即为“使用作者源码原配置”
+  CUSTOM_FREQ: "default"              
+  CUSTOM_VOLT: "default"                
+  CUSTOM_DELAY: "default"               
   
-  CUSTOM_FREQ: "default"              # 频率: [如 320000, 360000] 或 [default]
-  CUSTOM_VOLT: "default"                # 电压: [如 1_20, 1_25, 1_30] 或 [default]
-  CUSTOM_DELAY: "default"               # 延迟: [如 1000, 1500] 或 [default]
-  CUSTOM_SDK: "default"              # SDK版本: [如 2.2.0, 2.1.0] 或 [default (自动读取源码要求)]
+  # 填写具体版本号 或 "default"(自动从 CMakeLists.txt 读取作者配置)
+  CUSTOM_SDK: "default"              
+  CUSTOM_TOOLCHAIN: "default"        
+  CUSTOM_PICOTOOL: "default"         
   # =================================================
 
 jobs:
@@ -25,91 +27,98 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
-      - name: Install Dependencies
+      - name: Install Base Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake gcc-arm-none-eabi libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib python3
+          sudo apt-get install -y cmake python3 libusb-1.0-0-dev libstdc++-arm-none-eabi-newlib libnewlib-arm-none-eabi
 
-      - name: Determine SDK Version
-        id: target_sdk
+      - name: Auto-Detect and Install Toolchain
         run: |
-          if [ "${{ env.CUSTOM_SDK }}" == "default" ]; then
-            # 如果是 default，就从 CMakeLists.txt 中自动抓取作者设定的 SDK 版本
-            SDK_VER=$(grep -i "set(sdkVersion" CMakeLists.txt | grep -o "[0-9]\+\.[0-9]\+\.[0-9]\+" | head -1)
-            # 如果没抓到（作者删了这行），给个兜底版本
-            if [ -z "$SDK_VER" ]; then SDK_VER="2.2.0"; fi 
-            echo "SDK_TARGET=$SDK_VER" >> $GITHUB_ENV
-            echo "Mode: DEFAULT. Using author's required SDK version: $SDK_VER"
+          # 1. 确定版本号
+          if [ "${{ env.CUSTOM_TOOLCHAIN }}" = "default" ]; then
+            RAW_TC_VER=$(grep "set(toolchainVersion" CMakeLists.txt | sed 's/.*toolchainVersion \(.*\)).*/\1/' | xargs)
+            if [ -z "$RAW_TC_VER" ]; then RAW_TC_VER="14_2_Rel1"; fi
           else
-            # 如果写了具体数值，就用自定义的
-            echo "SDK_TARGET=${{ env.CUSTOM_SDK }}" >> $GITHUB_ENV
-            echo "Mode: CUSTOM. Forcing SDK version: ${{ env.CUSTOM_SDK }}"
+            RAW_TC_VER="${{ env.CUSTOM_TOOLCHAIN }}"
           fi
+          
+          # 2. 格式转换: 14_2_Rel1 -> 14.2.rel1 (用于构建下载链接)
+          URL_VER=$(echo $RAW_TC_VER | sed 's/_/./g' | tr '[:upper:]' '[:lower:]')
+          echo "Target Toolchain Version: $URL_VER"
+          
+          # 3. 下载并解压
+          curl -Lo gcc-arm.tar.xz "https://developer.arm.com/-/media/Files/downloads/gnu/$URL_VER/binrel/arm-gnu-toolchain-$URL_VER-x86_64-arm-none-eabi.tar.xz"
+          mkdir -p $HOME/toolchain
+          tar -xf gcc-arm.tar.xz -C $HOME/toolchain --strip-components=1
+          echo "$HOME/toolchain/bin" >> $GITHUB_PATH
+          echo "COMPILER_PATH=$HOME/toolchain/bin" >> $GITHUB_ENV
 
-      - name: Set up Pico SDK & Force Update TinyUSB
+      - name: Auto-Detect and Build Picotool
         run: |
-          git clone --depth 1 --branch ${{ env.SDK_TARGET }} https://github.com/raspberrypi/pico-sdk.git $HOME/pico-sdk
+          if [ "${{ env.CUSTOM_PICOTOOL }}" = "default" ]; then
+            PT_VER=$(grep "set(picotoolVersion" CMakeLists.txt | sed 's/.*picotoolVersion \(.*\)).*/\1/' | xargs)
+            if [ -z "$PT_VER" ]; then PT_VER="2.2.0-a4"; fi
+          else
+            PT_VER="${{ env.CUSTOM_PICOTOOL }}"
+          fi
+          echo "Target Picotool Version: $PT_VER"
+          
+          git clone --branch $PT_VER https://github.com/raspberrypi/picotool.git $HOME/picotool
+          cd $HOME/picotool
+          mkdir build && cd build
+          cmake ..
+          make -j$(nproc)
+          sudo make install
+
+      - name: Auto-Detect and Set up Pico SDK
+        run: |
+          if [ "${{ env.CUSTOM_SDK }}" = "default" ]; then
+            SDK_VER=$(grep "set(sdkVersion" CMakeLists.txt | sed 's/.*sdkVersion \(.*\)).*/\1/' | xargs)
+            if [ -z "$SDK_VER" ]; then SDK_VER="2.2.0"; fi
+          else
+            SDK_VER="${{ env.CUSTOM_SDK }}"
+          fi
+          echo "Target SDK Version: $SDK_VER"
+          
+          git clone --depth 1 --branch $SDK_VER https://github.com/raspberrypi/pico-sdk.git $HOME/pico-sdk
           cd $HOME/pico-sdk
           git submodule update --init --recursive
           
-          # 作者要求使用最新的 TinyUSB，这一步保持固定执行
+          # 始终同步最新的 TinyUSB (这是目前 DS5 项目稳定性的关键)
           rm -rf lib/tinyusb
           git clone --depth 1 https://github.com/hathach/tinyusb.git lib/tinyusb
           
           echo "PICO_SDK_PATH=$HOME/pico-sdk" >> $GITHUB_ENV
 
-      - name: Dynamically Extract Version
+      - name: Dynamically Extract Program Version
         id: get_version
         run: |
           VERSION=$(grep "pico_set_program_version" CMakeLists.txt | head -n 1 | sed 's/.*"\(.*\)".*/\1/')
-          if [ -z "$VERSION" ]; then VERSION="unknown"; fi
           echo "VER=$VERSION" >> $GITHUB_ENV
 
-      - name: Apply Individual Patches
+      - name: Apply Frequency/Voltage/Delay Patches
         run: |
-          # 每一个选项都独立判断：只有不等于 "default" 时，才执行 sed 替换
-          
-          # 1. 独立替换电压
           if [ "${{ env.CUSTOM_VOLT }}" != "default" ]; then
             sed -i "s/vreg_set_voltage(VREG_VOLTAGE_[0-9_]*)/vreg_set_voltage(VREG_VOLTAGE_${{ env.CUSTOM_VOLT }})/g" src/main.cpp
-            echo "Patched Voltage -> VREG_VOLTAGE_${{ env.CUSTOM_VOLT }}"
           fi
-          
-          # 2. 独立替换延迟
           if [ "${{ env.CUSTOM_DELAY }}" != "default" ]; then
             sed -i "s/sleep_ms([0-9]*)/sleep_ms(${{ env.CUSTOM_DELAY }})/g" src/main.cpp
-            echo "Patched Delay -> ${{ env.CUSTOM_DELAY }}ms"
           fi
-          
-          # 3. 独立替换频率
           if [ "${{ env.CUSTOM_FREQ }}" != "default" ]; then
             sed -i "s/set_sys_clock_khz([0-9]*, true)/set_sys_clock_khz(${{ env.CUSTOM_FREQ }}, true)/g" src/main.cpp
-            echo "Patched Frequency -> ${{ env.CUSTOM_FREQ }} kHz"
           fi
-
-      - name: Generate Smart Artifact Name
-        run: |
-          # 自动根据你的自定义情况生成文件后缀
-          NAME="ds5-v${{ env.VER }}"
-          
-          if [ "${{ env.CUSTOM_FREQ }}" != "default" ]; then NAME="${NAME}-${{ env.CUSTOM_FREQ }}"; fi
-          if [ "${{ env.CUSTOM_VOLT }}" != "default" ]; then NAME="${NAME}-${{ env.CUSTOM_VOLT }}V"; fi
-          
-          # 如果都没改，就加个 original 标签
-          if [ "${{ env.CUSTOM_FREQ }}" == "default" ] && [ "${{ env.CUSTOM_VOLT }}" == "default" ]; then
-            NAME="${NAME}-original"
-          fi
-          
-          echo "FILE_NAME=$NAME" >> $GITHUB_ENV
 
       - name: Configure and Build
         run: |
           mkdir build && cd build
-          cmake -DPICO_BOARD=pico2_w ..
+          cmake -DPICO_BOARD=pico2_w \
+                -DCMAKE_C_COMPILER=${{ env.COMPILER_PATH }}/arm-none-eabi-gcc \
+                -DCMAKE_CXX_COMPILER=${{ env.COMPILER_PATH }}/arm-none-eabi-g++ \
+                ..
           make -j$(nproc)
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.FILE_NAME }}
+          name: ds5-v${{ env.VER }}-${{ env.CUSTOM_FREQ }}-${{ env.CUSTOM_VOLT }}V
           path: build/*.uf2
