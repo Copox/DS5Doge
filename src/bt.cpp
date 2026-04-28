@@ -23,6 +23,10 @@
 
 #define MTU 672
 
+using std::unordered_map;
+using std::vector;
+using std::queue;
+
 static void hci_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size);
 static void l2cap_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size);
 
@@ -34,8 +38,8 @@ static hci_con_handle_t acl_handle = HCI_CON_HANDLE_INVALID;
 static uint16_t hid_control_cid;
 static uint16_t hid_interrupt_cid;
 static bt_data_callback_t bt_data_callback = nullptr;
-std::unordered_map<uint8_t, std::vector<uint8_t> > feature_data;
-static std::queue<std::vector<uint8_t> > send_queue;
+unordered_map<uint8_t, vector<uint8_t> > feature_data;
+static queue<vector<uint8_t> > send_queue;
 static critical_section_t queue_lock;
 uint32_t inactive_time = 0; // 手柄长时间静默
 
@@ -333,10 +337,15 @@ static void l2cap_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t 
                 bt_disconnect();
             }
         } else if (channel == hid_control_cid) {
-            if (size > 1 && packet[0] == 0xA3) {
+            if (packet[0] == 0xA3) {
                 uint8_t report_id = packet[1];
                 feature_data[report_id].assign(packet + 1, packet + size);
                 printf("[L2CAP] Stored Feature Report 0x%02X, len=%u\n", report_id, size - 1);
+            }
+            if (packet[0] == 0x00) {
+                printf("[L2CAP] Getting Test Result\n");
+                feature_data.erase(0x81);
+                get_feature_data(0x81,64);
             }
             printf("[L2CAP] HID Control data len=%u\n", size);
             printf_hexdump(packet, size);
@@ -442,7 +451,7 @@ static void l2cap_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t 
                 critical_section_exit(&queue_lock);
                 break;
             }
-            std::vector<uint8_t> data = send_queue.front();
+            vector<uint8_t> data = send_queue.front();
             send_queue.pop();
             critical_section_exit(&queue_lock);
 
@@ -458,13 +467,13 @@ static void l2cap_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t 
 
 void bt_write(uint8_t *data, uint16_t len) {
     if (hid_interrupt_cid == 0) return;
-    std::vector<uint8_t> packet(len + 1);
+    vector<uint8_t> packet(len + 1);
     packet[0] = 0xA2;
     memcpy(packet.data() + 1, data, len);
     fill_output_report_checksum(packet.data() + 1, len);
 
     critical_section_enter_blocking(&queue_lock);
-    send_queue.push(std::move(packet)); // 使用 std::move 避免深拷贝
+    send_queue.push(move(packet)); // 使用 move 避免深拷贝
     critical_section_exit(&queue_lock);
 
     if (hid_interrupt_cid == 0) {
@@ -476,20 +485,34 @@ void bt_write(uint8_t *data, uint16_t len) {
     }
 }
 
-std::vector<uint8_t> get_feature_data(uint8_t reportId, uint16_t len) {
-    if (feature_data.find(reportId) == feature_data.end() || feature_data[reportId].empty()) {
+vector<uint8_t> get_feature_data(uint8_t reportId, uint16_t len) {
+    if (!feature_data.contains(reportId) || feature_data[reportId].empty()) {
         if (hid_control_cid != 0) {
             uint8_t get_feature[] = {0x43, reportId};
             l2cap_send(hid_control_cid, get_feature, len);
-            printf("[L2CAP] Requesting Feature Report 0x%02X\n", reportId);
+            printf("[L2CAP] Requesting Get Feature Report 0x%02X\n", reportId);
         }
         return {};
     }
     return feature_data[reportId];
 }
 
+void set_feature_data(uint8_t reportId, uint8_t* data,uint16_t len) {
+    if (hid_control_cid != 0) {
+        uint8_t get_feature[len + 2];
+        get_feature[0] = 0x53;
+        get_feature[1] = reportId;
+        memcpy(get_feature + 2,data,len);
+        fill_feature_report_checksum(get_feature + 1,len + 1);
+        l2cap_send(hid_control_cid, get_feature, len + 2);
+        printf("[L2CAP] Requesting Set Feature Report 0x%02X\n", reportId);
+        printf_hexdump(get_feature,len + 2);
+    }
+}
+
 void init_feature() {
     get_feature_data(0x09, 20);
     get_feature_data(0x20, 64);
+    get_feature_data(0x22, 64);
     get_feature_data(0x05, 41);
 }
