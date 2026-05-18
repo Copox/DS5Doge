@@ -13,8 +13,6 @@ This project enables the Raspberry Pi Pico2W to function as a Bluetooth bridge f
 - 🎮 Full DualSense connectivity via Pico2W
 - 🔊 Supports HD haptics (advanced vibration feedback)
 - 📡 Wireless Bluetooth bridging
-- ⚙️ Adjustable haptic gain via microphone volume
-- 🔕 Configurable LED and disconnection behaviors
 
 ## Getting Started
 
@@ -40,25 +38,14 @@ You have two options:
 2. Wait for the Pico2W to detect and connect
 3. Once connected, the device will appear on the host system
 
+***You may need to replug the Pico when the controller is in pairing mode.***
+
 ## Configuration
 
-The following controller settings are repurposed:
+You can modify the Pico settings via the web config.
 
-### Microphone volume
-
-Controls haptic gain multiplier
-
-Range: [1.0 – 2.0]
-
-### Speaker mute
-
-Disables LED connection indicator
-
-Takes effect after controller reconnects
-
-### Microphone mute
-
-Disables silent disconnection behavior
+- For release: https://ds5.awalol.eu.org
+- For development: https://ds5-dev.awalol.eu.org
 
 ## Notes
 
@@ -71,6 +58,20 @@ Some behaviors depend on reconnection cycles to take effect
 When the connected DualSense reports its battery at or below 10% (and it is not charging), the Pico onboard LED switches from solid-on to a 1 Hz blink so you can see the warning at a glance. The LED returns to solid-on as soon as the controller is plugged in or its reported level rises again. The blink also fires when `disable_pico_led` is set — the warning is treated as critical and overrides the LED-off preference; the LED returns to its disabled (off) state once the battery recovers or the controller starts charging.
 
 To opt out at build time, configure with `-DENABLE_BATT_LED=OFF`. Default is ON.
+
+### Pico W Version
+
+Pico W only has haptics support, no speaker. You can enable Pico W firmware compilation with `-DPICO_W_BUILD=ON`, or download precompiled firmware from GitHub Actions.
+
+### USB Wake Feature
+
+This feature is experimental. If you need this functionality, please check out the feat/usb-wake branch to compile it, or use the precompiled firmware from GitHub Actions under that branch. The `ds5-bridge-wake.uf2` is the firmware with this feature enabled.
+
+It is recommended to read #60 and #61 before using this feature.
+
+### Community Fork
+https://github.com/MarcelineVPQ/DS5Dongle-OLED-Edition
+https://github.com/zurce/DS5Dongle-OLED
 
 ## Known Issues
 
@@ -121,10 +122,15 @@ Build a variant with `-Variant debug` or `-Variant wake`.
 To build from source manually:
 
 1. Install the Pico SDK 2.2.0 and switch its TinyUSB submodule to tag 0.20.0
+i.e. ***Update TinyUSB in the Pico SDK to the latest version***
 2. Initialise this repo's submodules: `git submodule update --init --recursive`
 3. Configure and build with the standard Pico SDK toolchain:
    `cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DPICO_SDK_PATH=<sdk>`
    then `cmake --build build --target ds5-bridge`
+
+1. ***Update TinyUSB in the Pico SDK to the latest version***
+2. Compile using standard Pico SDK toolchain
+
 
 ## Roadmap
 - Please check out [DS5Dongle plan](https://github.com/users/awalol/projects/5)
