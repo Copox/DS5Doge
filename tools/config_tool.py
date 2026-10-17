@@ -249,6 +249,7 @@ FIELDS = [
     ("status_gpio_pin",    "u8",    lambda v: 0 <= v <= 255,     "GPIO number (255 disables; firmware rejects board-reserved pins)"),
     ("status_gpio_mode",   "u8",    lambda v: v in (0, 1),       "0:pull high 1:200ms button pulse"),
     ("packet_mode",        "u8",    lambda v: v in (0, 1),       "0:double packet 1:single packet"),
+    ("disconnect_on_dock", "u8",    lambda v: v in (0, 1),       "0/1 (drop the BT link while the controller sits on a charger/dock)"),
 ]
 FIELD_NAMES = [f[0] for f in FIELDS]
 # Little-endian, no padding -- matches __attribute__((packed)) Config_body.

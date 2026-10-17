@@ -107,6 +107,17 @@ void __not_in_flash_func(on_bt_data)(CHANNEL_TYPE channel, uint8_t *data, uint16
             update_state(state);
         }*/
 
+        // Dock: USB power without USB data (a host cable sets both); latch so
+        // one dock event sends one disconnect.
+        static bool dock_latched = false;
+        const bool docked = (data[56] & 0x10) != 0 && (data[56] & 0x08) == 0;
+        if (!docked) {
+            dock_latched = false;
+        } else if (!dock_latched && get_config().disconnect_on_dock && bt_disconnect()) {
+            dock_latched = true;
+            printf("[BT] Dock detect (status1=0x%02X), disconnect\n", data[56]);
+        }
+
         // Wake-on-PS must observe every BT input report regardless of polling
         // mode: the wake feature has its own state to maintain (button-byte
         // diff for edge detection) and short-circuiting it on non-2 polling

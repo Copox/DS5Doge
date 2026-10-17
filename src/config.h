@@ -37,7 +37,8 @@ struct __attribute__((packed)) Config_body {
     uint8_t lock_volume; // bool
     uint8_t status_gpio_pin; // board-usable GPIO, 0xff: disabled
     uint8_t status_gpio_mode; // 0: high while connected, 1: button pulse on connect
-    uint8_t packet_mode; // 0: double packet 1: single packet
+    uint8_t packet_mode; // 0: double packet(default), 1: single packet
+    uint8_t disconnect_on_dock; // bool: 0 disable(default), 1 enable
 };
 
 static_assert(sizeof(Config_body) + 1 <= 63); // 0xF6 funcid + body

@@ -148,6 +148,10 @@ void config_valid() {
         body->packet_mode = 0;
         printf("[Config] packet_mode is invalid\n");
     }
+    if (body->disconnect_on_dock > 1) {
+        body->disconnect_on_dock = 0;
+        printf("[Config] disconnect_on_dock is invalid\n");
+    }
     button_remap_valid();
     shortcut_valid();
 }
