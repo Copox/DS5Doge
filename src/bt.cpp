@@ -920,7 +920,9 @@ vector<uint8_t> get_feature_data(uint8_t reportId, uint16_t len) {
         reportId == 0x64) {
         if (hid_control_cid != 0) {
             uint8_t get_feature[] = {0x43, reportId};
-            l2cap_send(hid_control_cid, get_feature, sizeof(get_feature));
+            if (!control_send_wait(get_feature, sizeof(get_feature), 100)) {
+                printf("[L2CAP] Request Get Feature Report 0x%02X failed\n", reportId);
+            }
 #if ENABLE_VERBOSE
             printf("[L2CAP] Requesting Get Feature Report 0x%02X\n", reportId);
 #endif
