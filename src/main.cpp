@@ -296,6 +296,8 @@ int main() {
     vreg_set_voltage(VREG_VOLTAGE_1_20);
     sleep_ms(1000);
     set_sys_clock_khz(SYS_CLOCK_KHZ, true);
+#else
+    vreg_set_voltage(VREG_VOLTAGE_DEFAULT); // the VREG keeps 1.20 V from older firmware until a power cycle
 #endif
 
     board_init();
