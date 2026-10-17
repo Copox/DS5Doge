@@ -144,6 +144,10 @@ void config_valid() {
         body->status_gpio_mode = 0;
         printf("[Config] status_gpio_mode is invalid\n");
     }
+    if (body->packet_mode > 1) {
+        body->packet_mode = 0;
+        printf("[Config] packet_mode is invalid\n");
+    }
     button_remap_valid();
     shortcut_valid();
 }
