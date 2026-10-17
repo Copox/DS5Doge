@@ -12,6 +12,7 @@
 #include "btstack_event.h"
 #include "btstack_tlv.h"
 #include "gap.h"
+#include "hci.h"
 #include "l2cap.h"
 #include "pico/cyw43_arch.h"
 #include "utils.h"
@@ -54,7 +55,7 @@ static int bt_clear_flash_toggles_remaining = 0;
 static uint32_t bt_clear_flash_last_toggle_ms = 0;
 // Persistent blacklist of controllers cleared by BOOTSEL hold. Survives
 // power-cycles via BTstack TLV flash storage. Blocked at CONNECTION_REQUEST
-// so PS-only auto-reconnect fails; INQUIRY_RESULT path is still allowed so
+// so PS-only auto-reconnect fails; the inquiry path is still allowed so
 // the user can intentionally re-pair the controller in PS+Share mode, which
 // removes that MAC from the blacklist on successful pair.
 #define BT_BLACKLIST_TLV_TAG  ((uint32_t) 0x424C434B) // ASCII 'BLCK'
@@ -167,6 +168,11 @@ int bt_init() {
 
     hci_event_callback_registration.callback = &hci_packet_handler;
     hci_add_event_handler(&hci_event_callback_registration);
+
+    // Ask the controller for inquiry results with RSSI + Extended Inquiry
+    // Response so each result carries the remote device name. Must be set
+    // before the stack is powered on (the HCI init sequence writes it).
+    hci_set_inquiry_mode(INQUIRY_MODE_RSSI_AND_EIR);
 
     hci_power_control(HCI_POWER_ON);
     return 0;
@@ -374,6 +380,15 @@ void bt_inquiring_led() {
     }
 }
 
+// Returns true when the advertised device name starts with "DualSense"
+// (covers both "DualSense Wireless Controller" and "DualSense Edge Wireless
+// Controller"). The name comes from the EIR payload and is not NUL-terminated.
+static bool inquiry_name_is_dualsense(const uint8_t *name, uint8_t name_len) {
+    static const char prefix[] = "DualSense";
+    const uint8_t prefix_len = sizeof(prefix) - 1;
+    return name_len >= prefix_len && memcmp(name, prefix, prefix_len) == 0;
+}
+
 static void __not_in_flash_func(hci_packet_handler)(uint8_t packet_type, uint16_t channel, uint8_t *packet,
                                                     uint16_t size) {
     (void) channel;
@@ -394,33 +409,41 @@ static void __not_in_flash_func(hci_packet_handler)(uint8_t packet_type, uint16_
             }
             break;
         }
-        case HCI_EVENT_INQUIRY_RESULT:
-        case HCI_EVENT_INQUIRY_RESULT_WITH_RSSI:
-        case HCI_EVENT_EXTENDED_INQUIRY_RESPONSE: {
-            bd_addr_t addr;
-            uint32_t cod;
+        // BTstack's GAP layer parses the Extended Inquiry Response (EIR) of
+        // every inquiry response and republishes it as GAP_EVENT_INQUIRY_RESULT
+        // with the advertised device name attached (BTstack also still forwards
+        // the raw HCI event, but only this event carries the name). Only a
+        // device whose name starts with "DualSense" is accepted; all other
+        // devices found during the inquiry are ignored.
+        case GAP_EVENT_INQUIRY_RESULT: {
+            if (device_found) break; // already latched a target, keep first match
 
-            if (event_type == HCI_EVENT_INQUIRY_RESULT) {
-                cod = hci_event_inquiry_result_get_class_of_device(packet);
-                hci_event_inquiry_result_get_bd_addr(packet, addr);
-            } else if (event_type == HCI_EVENT_INQUIRY_RESULT_WITH_RSSI) {
-                cod = hci_event_inquiry_result_with_rssi_get_class_of_device(packet);
-                hci_event_inquiry_result_with_rssi_get_bd_addr(packet, addr);
-            } else {
-                cod = hci_event_extended_inquiry_response_get_class_of_device(packet);
-                hci_event_extended_inquiry_response_get_bd_addr(packet, addr);
+            bd_addr_t addr;
+            gap_event_inquiry_result_get_bd_addr(packet, addr);
+            const uint8_t name_len = gap_event_inquiry_result_get_name_len(packet);
+            const uint8_t *name = gap_event_inquiry_result_get_name(packet);
+
+            // Without an EIR name the device cannot be identified, so skip it
+            // rather than connecting to something that might not be a DS5.
+            if (!gap_event_inquiry_result_get_name_available(packet) || name_len == 0) {
+                printf("[HCI] Inquiry result %s: no name in EIR, skip\n", bd_addr_to_str(addr));
+                break;
             }
 
-            // CoD 0x002508 = Gamepad (Major: Peripheral, Minor: Gamepad)
+            printf("[HCI] Inquiry result %s name=\"%.*s\"\n",
+                   bd_addr_to_str(addr), (int) name_len, reinterpret_cast<const char *>(name));
+
             // Blacklisted MACs are NOT filtered here so the user can intentionally
             // re-pair them in PS+Share mode (dongle-initiated path). PS-only
             // (controller-initiated) is blocked at CONNECTION_REQUEST.
-            if ((cod & 0x000F00) == 0x000500) {
-                printf("[HCI] Gamepad found: %s (CoD: 0x%06x)\n", bd_addr_to_str(addr), (unsigned int) cod);
-                bd_addr_copy(current_device_addr, addr);
-                device_found = true;
-                gap_inquiry_stop();
+            if (!inquiry_name_is_dualsense(name, name_len)) {
+                break;
             }
+
+            printf("[HCI] DualSense found: %s\n", bd_addr_to_str(addr));
+            bd_addr_copy(current_device_addr, addr);
+            device_found = true;
+            gap_inquiry_stop();
             break;
         }
         case GAP_EVENT_INQUIRY_COMPLETE:
