@@ -479,6 +479,7 @@ uint8_t const *tud_descriptor_configuration_cb(uint8_t index) {
             bInterval = 0x02;
             break;
         case 2:
+        case 3:
             bInterval = 0x01;
             break;
     }
