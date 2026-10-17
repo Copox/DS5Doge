@@ -116,7 +116,6 @@ add_executable(ds5-bridge
         src/audio.cpp
         src/bt.cpp
         src/button_functions.cpp
-        src/dse.cpp
         src/config.cpp
         src/status_gpio.cpp
         src/cmd.cpp

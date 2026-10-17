@@ -26,7 +26,6 @@
 #endif
 #include "config.h"
 #include "cmd.h"
-#include "dse.h"
 #include "status_gpio.h"
 #if ENABLE_BATT_LED
 #include "battery_led.h"
@@ -156,20 +155,24 @@ uint16_t tud_hid_get_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t
         return pico_cmd_get(report_id, buffer, reqlen);
     }
 
-    // DSE profiles: while the unlock + prefetch is still in progress, return 0
-    // (NAK) for profile reads so the PS app retries rather than caching an
-    // empty snapshot. Still kick off the background BT fetch.
-    if (dse_is_profile_report(report_id) && !dse_profiles_ready()) {
-        get_feature_data(report_id, reqlen);
-        return 0;
+    // Reports that must mirror the controller's live state: the DSE profile
+    // slots (0x70-0x7B) and the test-command result (0x81). Hold the USB
+    // control transfer while the BT GET is in flight; get_feature_data_live()
+    // pumps the BT stack (not tud_task()) until the 0xA3 reply arrives or the
+    // timeout expires, then falls back to the last cached body.
+    if (report_id == 0x81 || (report_id >= 0x70 && report_id <= 0x7B)) {
+        std::vector<uint8_t> live = get_feature_data_live(report_id, 250);
+        if (live.empty()) return 0;
+        const uint16_t n = live.size() < reqlen ? (uint16_t) live.size() : reqlen;
+        memcpy(buffer, live.data(), n);
+        return n;
     }
 
     std::vector<uint8_t> feature_data = get_feature_data(report_id, reqlen);
-    if (!feature_data.empty()) {
-        memcpy(buffer, feature_data.data(), feature_data.size());
-    }
-
-    return feature_data.empty() ? 0 : feature_data.size();
+    if (feature_data.empty()) return 0;
+    const uint16_t n = feature_data.size() < reqlen ? (uint16_t) feature_data.size() : reqlen;
+    memcpy(buffer, feature_data.data(), n);
+    return n;
 }
 
 bool tud_audio_set_itf_cb(uint8_t rhport, tusb_control_request_t const *p_request) {
@@ -219,6 +222,21 @@ void tud_hid_set_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t rep
         return;
     }
 
+    // Feature reports written by the host must reach the controller: 0x80 is
+    // the test command / DSE unlock, 0x60-0x62 are profile blocks.
+    // set_feature_data() adds the 0x53 BT wrapper and recomputes the CRC that
+    // the USB path leaves as zero (USB does not validate it, BT does).
+    if (report_type == HID_REPORT_TYPE_FEATURE &&
+        (report_id == 0x80 || (report_id >= 0x60 && report_id <= 0x62))) {
+        // TinyUSB owns this buffer and the BT pump can re-enter USB printf,
+        // so copy it before touching anything else.
+        uint8_t buf_copy[CFG_TUD_HID_EP_BUFSIZE];
+        const uint16_t n = bufsize < sizeof(buf_copy) ? bufsize : (uint16_t) sizeof(buf_copy);
+        memcpy(buf_copy, buffer, n);
+        set_feature_data(report_id, buf_copy, n);
+        return;
+    }
+
     // INTERRUPT OUT
     if (report_id == 0) {
         switch (buffer[0]) {
@@ -261,13 +279,6 @@ void tud_hid_set_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t rep
                 break;
             }
         }
-    }
-    if (report_id == 0x80 ||
-        // DSE: Write Profile Block
-        report_id == 0x60 ||
-        report_id == 0x62 ||
-        report_id == 0x61) {
-        // set_feature_data(report_id, const_cast<uint8_t *>(buffer), bufsize);
     }
 }
 
@@ -367,6 +378,5 @@ int main() {
 #endif
         button_check();
         bt_inquiring_led();
-        dse_task();
     }
 }

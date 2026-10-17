@@ -19,11 +19,12 @@
 #include "classic/sdp_server.h"
 #include "config.h"
 #include "status_gpio.h"
-#include "dse.h"
 #include "fake_ds5.h"
 #include "wake.h"
 #include "usb.h"
 #include "pico/util/queue.h"
+#include "pico/time.h"
+#include "pico/platform.h"
 #if ENABLE_BATT_LED
 #include "battery_led.h"
 #endif
@@ -72,6 +73,9 @@ static uint16_t hid_interrupt_cid;
 static bt_data_callback_t bt_data_callback = nullptr;
 static int8_t bt_rssi = 0;
 unordered_map<uint8_t, vector<uint8_t> > feature_data;
+// Bumped every time a feature report arrives on the HID control channel.
+// Used as a lightweight "response arrived" signal by get_feature_data_live().
+static volatile uint32_t feature_rx_epoch[256];
 queue_t send_fifo;
 
 struct send_element {
@@ -678,6 +682,7 @@ static void __not_in_flash_func(l2cap_packet_handler)(uint8_t packet_type, uint1
             if (packet[0] == 0xA3) {
                 const uint8_t report_id = packet[1];
                 feature_data[report_id].assign(packet + 2, packet + size);
+                feature_rx_epoch[report_id]++;
 #if ENABLE_VERBOSE
                 printf("[L2CAP] Stored Feature Report 0x%02X, len=%u\n", report_id, size - 2);
                 printf("[L2CAP] HID Control data len=%u\n", size);
@@ -687,7 +692,6 @@ static void __not_in_flash_func(l2cap_packet_handler)(uint8_t packet_type, uint1
                     if (packet[23] == 0x44) {
                         printf("Connected DSE Controller\n");
                         is_dse = true;
-                        dse_on_connect();
 
                         if (get_config().controller_mode == 0) {
                             feature_data[0x20].assign(report20,report20 + sizeof(report20));
@@ -702,7 +706,6 @@ static void __not_in_flash_func(l2cap_packet_handler)(uint8_t packet_type, uint1
                 }
             }
 
-            dse_on_control_packet(packet, size);
             bt_data_callback(CONTROL, packet, size);
         } else {
             printf("[L2CAP] Data on unknown channel 0x%04X (Interrupt: 0x%04X, Control: 0x%04X)\n",
@@ -840,15 +843,24 @@ static void __not_in_flash_func(l2cap_packet_handler)(uint8_t packet_type, uint1
     }
 }
 
-// Accessors used by the DSE profile module (dse.cpp).
-uint16_t bt_control_cid() {
-    return hid_control_cid;
-}
+// Push one already-built feature-report frame onto the HID control channel.
+// l2cap_send() fails when no ACL buffer is free, so retry while pumping the
+// stack. Keeping this synchronous also guarantees ordering: the SET is on the
+// wire before the host can issue the GET that follows it.
+static bool control_send_wait(const uint8_t *data, uint16_t len, uint16_t timeout_ms) {
+    if (hid_control_cid == 0) return false;
 
-void bt_control_send(const uint8_t *data, uint16_t len) {
-    if (hid_control_cid != 0) {
-        l2cap_send(hid_control_cid, const_cast<uint8_t *>(data), len);
-    }
+    const absolute_time_t deadline = make_timeout_time_ms(timeout_ms);
+    do {
+        if (l2cap_can_send_packet_now(hid_control_cid) &&
+            l2cap_send(hid_control_cid, const_cast<uint8_t *>(data), len) == 0) {
+            return true;
+        }
+        cyw43_arch_poll();
+        tight_loop_contents();
+    } while (!time_reached(deadline));
+
+    return false;
 }
 
 void __not_in_flash_func(bt_write)(const uint8_t *data, const uint16_t len) {
@@ -869,23 +881,19 @@ void __not_in_flash_func(bt_write)(const uint8_t *data, const uint16_t len) {
 }
 
 vector<uint8_t> get_feature_data(uint8_t reportId, uint16_t len) {
-    // 若为0x81则会请求新内容，其他若有旧数据则不进行请求
+    (void) len;
+    // Fire-and-forget refresh for reports that change on the controller side;
+    // callers that need a synchronous answer use get_feature_data_live().
     auto ret = vector<uint8_t>{};
     const bool has_cached_report = feature_data.contains(reportId);
     if (has_cached_report) {
         ret = feature_data[reportId];
     }
     if (!has_cached_report ||
-        // Get Test Command Result
-        // reportId == 0x81 ||
         // DSE: Set Profile Save?
         reportId == 0x63 ||
         reportId == 0x65 ||
-        reportId == 0x64 ||
-        // DSE profile slots: return cache, but refetch in background so the
-        // PS app's unlock(0x80) -> re-read flow sees fresh controller data.
-        dse_is_profile_report(reportId)
-    ) {
+        reportId == 0x64) {
         if (hid_control_cid != 0) {
             uint8_t get_feature[] = {0x43, reportId};
             l2cap_send(hid_control_cid, get_feature, sizeof(get_feature));
@@ -897,19 +905,70 @@ vector<uint8_t> get_feature_data(uint8_t reportId, uint16_t len) {
     return ret;
 }
 
-void set_feature_data(uint8_t reportId, uint8_t *data, uint16_t len) {
-    if (hid_control_cid != 0) {
-        uint8_t get_feature[len + 2];
-        get_feature[0] = 0x53;
-        get_feature[1] = reportId;
-        memcpy(get_feature + 2, data, len);
-        fill_feature_report_checksum(get_feature + 1, len + 1);
-        l2cap_send(hid_control_cid, get_feature, len + 2);
+vector<uint8_t> get_feature_data_live(uint8_t reportId, uint16_t timeout_ms) {
+    auto cached = vector<uint8_t>{};
+    auto it = feature_data.find(reportId);
+    if (it != feature_data.end()) {
+        cached = it->second;
+    }
+
+    if (hid_control_cid == 0) {
+        return cached;
+    }
+
+    // Ask the controller for the report, then drive the BT stack until the
+    // matching 0xA3 response shows up. This is the rendezvous that turns the
+    // asynchronous BT reply into the synchronous USB control-transfer answer:
+    // TinyUSB is still waiting in tud_hid_get_report_cb() while we pump.
+    const absolute_time_t deadline = make_timeout_time_ms(timeout_ms);
+    uint8_t get_feature[] = {0x43, reportId};
+    bool sent = false;
+    uint32_t epoch = 0;
+
+    while (!time_reached(deadline)) {
+        if (!sent) {
+            if (l2cap_can_send_packet_now(hid_control_cid) &&
+                l2cap_send(hid_control_cid, get_feature, sizeof(get_feature)) == 0) {
+                sent = true;
+                epoch = feature_rx_epoch[reportId];
 #if ENABLE_VERBOSE
-        printf("[L2CAP] Requesting Set Feature Report 0x%02X\n", reportId);
-        printf_hexdump(get_feature, len + 2);
+                printf("[L2CAP] Get Feature Report 0x%02X (live)\n", reportId);
 #endif
-        dse_on_profile_write(reportId);
+            }
+        }
+
+        cyw43_arch_poll();
+
+        if (sent && feature_rx_epoch[reportId] != epoch) {
+            break;
+        }
+        tight_loop_contents();
+    }
+
+    it = feature_data.find(reportId);
+    return it != feature_data.end() ? it->second : cached;
+}
+
+void set_feature_data(uint8_t reportId, uint8_t *data, uint16_t len) {
+    if (hid_control_cid == 0) return;
+    // The trailer carries the CRC, so anything shorter than 4 bytes cannot be
+    // checksummed (and would underflow the helper).
+    if (len < 4) return;
+
+    uint8_t get_feature[len + 2];
+    get_feature[0] = 0x53;
+    get_feature[1] = reportId;
+    memcpy(get_feature + 2, data, len);
+    // The host sends feature reports with a zero CRC field over USB (the USB
+    // path does not validate it); the BT link does, so compute it over
+    // [report id + first len-4 payload bytes] for the full-length report.
+    fill_feature_report_checksum(get_feature + 1, len + 1);
+#if ENABLE_VERBOSE
+    printf("[L2CAP] Requesting Set Feature Report 0x%02X\n", reportId);
+    printf_hexdump(get_feature, len + 2);
+#endif
+    if (!control_send_wait(get_feature, len + 2, 100)) {
+        printf("[L2CAP] Set Feature Report 0x%02X failed\n", reportId);
     }
 }
 
