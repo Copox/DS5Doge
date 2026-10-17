@@ -219,15 +219,18 @@ Build a variant with `-Variant debug`.
 
 To build from source manually:
 
-1. Install the Pico SDK 2.3.0 and switch its TinyUSB submodule to tag 0.21.0
-   i.e. ***Update TinyUSB in the Pico SDK to the latest version***
+1. Install the Pico SDK 2.3.1 and pin its TinyUSB submodule to `98741b55` — the
+   SDK's own submodule still points at TinyUSB 0.18.0, which is too old:
+
+   ```sh
+   git -C <sdk>/lib/tinyusb fetch --depth 1 origin 98741b55959564746998d0453c32d87064629d7c
+   git -C <sdk>/lib/tinyusb checkout --detach 98741b55959564746998d0453c32d87064629d7c
+   ```
+
 2. Initialise this repo's submodules: `git submodule update --init --recursive`
 3. Configure and build with the standard Pico SDK toolchain:
    `cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DPICO_SDK_PATH=<sdk>`
    then `cmake --build build --target ds5-bridge`
-
-1. ***Update TinyUSB in the Pico SDK to the latest version***
-2. Compile using standard Pico SDK toolchain
 
 On macOS, `tools/build-macos.sh` can prepare a repo-local Pico SDK checkout, prompt to install missing Homebrew build
 tools, initialize submodules, pin TinyUSB, and build the firmware:
