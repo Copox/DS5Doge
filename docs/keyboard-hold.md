@@ -42,6 +42,11 @@ Keyboard triggers read the physical state before gamepad remapping.
   from this service loop. A busy consumer endpoint does not block keyboard release.
 - The wake sequence temporarily owns the shared keyboard endpoint; hold/pulse
   output pauses during its F15 sequence and resumes with fresh physical input.
+- The config UI's "listen to controller" capture sends `0xF6` funcid `0x05`
+  with `buffer[1] = 1`. The firmware ignores controller input and pauses
+  shortcut output for `SHORTCUT_LEARNING_WINDOW_MS` (5 s), releasing anything
+  already held when the window opens. The window cannot be cancelled; the UI
+  stops listening on the same five-second schedule.
 - Unchanged keyboard state is cached: the main loop skips rebuilding reports
   until a hold, pulse or reset changes it.
 - Old firmware does not understand the new flag and normalizes these slots

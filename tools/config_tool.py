@@ -11,6 +11,7 @@ Protocol (see src/cmd.cpp / src/config.h):
       funcid 0x01 + body   -> update config in RAM (firmware clamps invalid values)
       funcid 0x02          -> persist config to flash
       funcid 0x03          -> reconnect the USB device
+      funcid 0x05 + 1      -> pause shortcut output for 5s (config UI trigger capture)
 
 Config_body is a packed struct; this tool derives the binary layout from FIELDS.
 

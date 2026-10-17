@@ -101,6 +101,26 @@ int main() {
     tick(1u << 8); assert(keys[0] == 0);
     tick((1u << 8) | (1u << 9)); assert(keys[0] == 5);
     now += 31; button_shortcut_task(); tick(0); assert(keys[0] == 0);
+    // Shortcut learning: input is ignored for the whole window, and output that
+    // was already down is released once so nothing stays stuck.
+    button_shortcut_reset(); button_shortcut_task();
+    for (auto& s : config.shortcuts) s.trigger_a = BUTTON_SHORTCUT_DISABLED;
+    slot(0, 8, 0, 4);
+    tick(1u << 8); assert(keys[0] == 4);
+    button_shortcut_start_learning();
+    button_shortcut_task(); assert(keys[0] == 0);
+    tick(0); tick(1u << 8); assert(keys[0] == 0 && mods == 0);
+    button_shortcut_task(); assert(keys[0] == 0);
+    now += SHORTCUT_LEARNING_WINDOW_MS;
+    tick(1u << 8); assert(keys[0] == 4); // still held: a fresh hold after the window
+    button_shortcut_reset(); button_shortcut_task();
+    slot(0, 8, 0, 4, 0);
+    button_shortcut_start_learning();
+    tick(1u << 8); tick(0); assert(keys[0] == 0); // a tap during learning fires nothing
+    now += SHORTCUT_LEARNING_WINDOW_MS;
+    button_shortcut_task(); assert(keys[0] == 0);
+    tick(1u << 8); assert(keys[0] == 4); // the state machine is live again
+    now += 31; button_shortcut_task(); assert(keys[0] == 0);
     slot(0, 8, 0, 4);
     auto invalid = config.shortcuts[0];
     invalid.flags |= SHORTCUT_FLAG_DOUBLE_TAP; assert(!shortcut_slot_valid(invalid));

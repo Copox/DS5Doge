@@ -70,6 +70,13 @@ static uint16_t engaged_mask = 0; // Last-tick engagement of each slot; fire on 
 // still keeps the lone-tap action from firing on release.
 static uint16_t chord_claimed_mask = 0;
 
+// Set from the USB command path while the config UI is learning a trigger.
+// A plain flag is enough: the window closing is keyed off a deadline, and the
+// update and the read sit next to each other in the main-loop task.
+static bool shortcut_learning = false;
+static bool shortcut_learning_reset = true; // state machine cleared for this window
+static absolute_time_t shortcut_learning_until = nil_time;
+
 // Merge physical holds and the existing timed pulse into one keyboard report.
 struct KeyboardState {
     uint8_t modifiers = 0;
@@ -373,6 +380,19 @@ void button_shortcut_reset() {
 void button_shortcut_task() {
     // Also called without BT input so endpoint backpressure/disconnect releases retry.
     if (!shortcuts_available()) return;
+    if (shortcut_learning) {
+        if (time_reached(shortcut_learning_until)) {
+            shortcut_learning = false;
+        } else if (!shortcut_learning_reset) {
+            // The config UI is capturing a trigger, so the shortcut output has
+            // to stay quiet. tick() skips the state machine entirely; drop any
+            // key, pulse or tap decision from before the window so none of it
+            // stays stuck while input is not looked at. This pass still runs
+            // below, which is what sends the reset's all-up report.
+            button_shortcut_reset();
+            shortcut_learning_reset = true;
+        }
+    }
     if (wake_keyboard_busy()) {
         if (!wake_owned_keyboard) button_shortcut_reset();
         wake_owned_keyboard = true;
@@ -398,8 +418,20 @@ void button_shortcut_task() {
 
 void button_shortcut_tick(const USBGetStateData &state) {
     if (!shortcuts_available() || wake_keyboard_busy()) return;
+    if (shortcut_learning) {
+        // Reading the deadline here is what ends the window; BT input arrives
+        // anyway, so learning does not depend on button_shortcut_task() running.
+        if (!time_reached(shortcut_learning_until)) return;
+        shortcut_learning = false;
+    }
     process_shortcuts(state);
     button_shortcut_task();
+}
+
+void button_shortcut_start_learning() {
+    shortcut_learning = true;
+    shortcut_learning_reset = false;
+    shortcut_learning_until = make_timeout_time_ms(SHORTCUT_LEARNING_WINDOW_MS);
 }
 
 #endif // ENABLE_WAKE_HID
