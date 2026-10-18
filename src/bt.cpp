@@ -576,8 +576,15 @@ static void __not_in_flash_func(hci_packet_handler)(uint8_t packet_type, uint16_
             const hci_con_handle_t handle = hci_event_authentication_complete_get_connection_handle(packet);
             printf("[HCI] Authentication complete handle=0x%04X status=0x%02X\n", handle, status);
             if (status != ERROR_CODE_SUCCESS) {
-                printf("[HCI] Authentication failed, drop stored key for %s\n", bd_addr_to_str(current_device_addr));
-                gap_drop_link_key_for_bd_addr(current_device_addr);
+                // Only a rejected or missing key means the pairing is gone. Other
+                // failures (a timeout, the link dropping mid-way) keep the key,
+                // so the controller can reconnect with PS without pairing again.
+                if (status == ERROR_CODE_AUTHENTICATION_FAILURE || status == ERROR_CODE_PIN_OR_KEY_MISSING) {
+                    printf("[HCI] Authentication failed, drop stored key for %s\n", bd_addr_to_str(current_device_addr));
+                    gap_drop_link_key_for_bd_addr(current_device_addr);
+                } else {
+                    printf("[HCI] Authentication failed (status 0x%02X), key kept\n", status);
+                }
                 bt_disconnect();
                 gap_inquiry_start(30);
             } else {
