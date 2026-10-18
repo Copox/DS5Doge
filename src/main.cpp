@@ -249,16 +249,23 @@ void tud_hid_set_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t rep
     }
 
     // INTERRUPT OUT
-    if (report_id == 0) {
+    if (report_id == 0 && bufsize > 0) {
         switch (buffer[0]) {
             case 0x02: {
+                // An output report with no body has nothing to forward.
+                if (bufsize < 2) {
+                    break;
+                }
                 uint8_t outputData[78]{};
                 outputData[0] = 0x31;
                 outputData[1] = reportSeqCounter << 4;
                 reportSeqCounter = (reportSeqCounter + 1) & 0x0F;
                 outputData[2] = 0x10;
                 SetStateData state{};
-                memcpy(&state,buffer + 1,sizeof(SetStateData));
+                // A short report fills only what it carries; the rest stays zero
+                // instead of being read from past the end of the transfer.
+                const uint16_t n = bufsize - 1 < sizeof(SetStateData) ? bufsize - 1 : (uint16_t) sizeof(SetStateData);
+                memcpy(&state, buffer + 1, n);
 
                 const auto &config = get_config();
                 if (config.trigger_reduce > 0) {
