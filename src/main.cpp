@@ -110,7 +110,7 @@ void __not_in_flash_func(on_bt_data)(CHANNEL_TYPE channel, uint8_t *data, uint16
         // Dock: USB power without USB data (a host cable sets both); latch so
         // one dock event sends one disconnect.
         static bool dock_latched = false;
-        const bool docked = (data[56] & 0x10) != 0 && (data[56] & 0x08) == 0;
+        const bool docked = (data[56] >> 6) & 1;
         if (!docked) {
             dock_latched = false;
         } else if (!dock_latched && get_config().disconnect_on_dock && bt_disconnect()) {
