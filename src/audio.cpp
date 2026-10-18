@@ -33,6 +33,11 @@
 #define REPORT_SIZE_SINGLE 398
 #define REPORT_ID_DOUBLE  0x39
 #define REPORT_SIZE_DOUBLE 547
+// 扬声器禁用时用的纯 haptics 报文：0x32 固定 142 字节（和 update_state() 的
+// SetStateData 报文、update_mic_status() 的麦克风状态报文同一个报告类型），
+// 不再为 Opus 扬声器块预留空间。
+#define REPORT_ID_HAPTICS_ONLY 0x32
+#define REPORT_SIZE_HAPTICS_ONLY 142
 // #define VOLUME_GAIN       2
 // #define BUFFER_LENGTH     48
 #define MIC_CHANNELS      1
@@ -189,13 +194,39 @@ static void __not_in_flash_func(audio_send_double)(const uint8_t *haptics, const
     bt_write(pkt, sizeof(pkt));
 }
 
+static void __not_in_flash_func(audio_send_haptics_only)(const uint8_t *haptics, const bool double_frame) {
+    const Config_body &cfg = get_config();
+    const bool mic_enabled = mic_active && cfg.mic_select != 3;
+    const auto buf_len = cfg.audio_buffer_length;
+
+    uint8_t pkt[REPORT_SIZE_HAPTICS_ONLY]{};
+    pkt[0] = REPORT_ID_HAPTICS_ONLY;
+    pkt[1] = reportSeqCounter << 4;
+    reportSeqCounter = (reportSeqCounter + 1) & 0x0F;
+    pkt[2] = 0x11 | 0 << 6 | 1 << 7;
+    pkt[3] = 4;
+    // bit 5 - buf_len adjust
+    // guess: bit 3 - mic vol?
+    pkt[4] = mic_enabled ? 0b01100111 : 0b01100110; // bit0: 手柄麦克风
+    pkt[5] = buf_len; // AudioBufferLength
+    pkt[6] = buf_len; // AudioBufferLength
+    pkt[7] = packetCounter++;
+    if (double_frame) {
+        packetCounter++;
+    }
+
+    pkt[8] = 0x12 | (double_frame ? 1 : 0) << 6 | 1 << 7;
+    pkt[9] = SAMPLE_SIZE;
+    memcpy(pkt + 10, haptics, SAMPLE_SIZE * (double_frame ? 2 : 1));
+    bt_write(pkt, sizeof(pkt));
+}
+
 void __not_in_flash_func(audio_bt_task)() {
     const Config_body &cfg = get_config();
-    // packet_mode: 0 = 双包（0x39，一包两帧），1 = 单包（0x36，一包一帧）
-    const uint8_t frames = cfg.packet_mode == 1 ? 1 : 2;
-#if !DISABLE_SPEAKER_PROC
     const bool speaker_enabled = cfg.speaker_select != 3;
-#endif
+    // packet_mode: 0 = 双包（0x39，一包两帧），1 = 单包（0x36，一包一帧）。
+    // 扬声器禁用时同样遵守单双包模式，只是报文换成 0x32 纯 haptics 报文。
+    const uint8_t frames = cfg.packet_mode == 1 ? 1 : 2;
 
     // 等够一整包的数据再取，避免把一帧拆到两个报文里
     if (queue_get_level(&haptics_fifo) < frames) {
@@ -230,7 +261,9 @@ void __not_in_flash_func(audio_bt_task)() {
     const uint8_t *spk = nullptr;
 #endif
 
-    if (frames == 1) {
+    if (!speaker_enabled) {
+        audio_send_haptics_only(haptics_pb, frames == 2);
+    } else if (frames == 1) {
         audio_send_single(haptics_pb, spk);
     } else {
         audio_send_double(haptics_pb, spk);
