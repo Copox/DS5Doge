@@ -685,7 +685,8 @@ static void __not_in_flash_func(l2cap_packet_handler)(uint8_t packet_type, uint1
             bt_data_callback(INTERRUPT, packet, size);
 
             // 静默检测
-            if (!(packet[2] & 1) || get_config().inactive_time == 0) {
+            // reads packet[2..12]: skip frames shorter than that
+            if (size < 13 || !(packet[2] & 1) || get_config().inactive_time == 0) {
                 return;
             }
             if (packet[3] < 120 || packet[3] > 140 ||

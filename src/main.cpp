@@ -85,6 +85,12 @@ void __not_in_flash_func(on_bt_data)(CHANNEL_TYPE channel, uint8_t *data, uint16
             }
             return;
         }
+        // Everything below reads up to data + 3 + sizeof(interrupt_in_data);
+        // a shorter frame would read stale bytes past its end (e.g. a false
+        // dock bit in data[56]).
+        if (len < 3 + sizeof(interrupt_in_data)) {
+            return;
+        }
         if ((data[56] & 1) != interrupt_in_data.PluggedHeadphones) {
             set_headset(data[56] & 1);
         }
