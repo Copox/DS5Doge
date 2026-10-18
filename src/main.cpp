@@ -334,8 +334,14 @@ int main() {
 #endif
 
     if (cyw43_arch_init()) {
-        printf("Failed to initialize CYW43\n");
-        return 1;
+        // Returning here hangs the board (the watchdog isn't armed yet) until
+        // it is unplugged; reboot instead so the next boot retries.
+        printf("Failed to initialize CYW43, rebooting\n");
+        sleep_ms(500);
+        watchdog_reboot(0, 0, 0);
+        while (true) {
+            tight_loop_contents();
+        }
     }
     cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, false);
 
