@@ -534,7 +534,7 @@ void __not_in_flash_func(core1_entry)() {
     sleep_ms(300);
 
     int error = 0;
-    encoder = opus_encoder_create(48000, 2,OPUS_APPLICATION_AUDIO, &error);
+    encoder = opus_encoder_create(48000, 2,OPUS_APPLICATION_RESTRICTED_CELT, &error);
     if (error != 0) {
         printf("[Audio] OpusEncoder create failed\n");
         return;
