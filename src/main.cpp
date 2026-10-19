@@ -85,6 +85,12 @@ void __not_in_flash_func(on_bt_data)(CHANNEL_TYPE channel, uint8_t *data, uint16
             }
             return;
         }
+        // Everything below reads up to data + 3 + sizeof(interrupt_in_data);
+        // a shorter frame would read stale bytes past its end (e.g. a false
+        // dock bit in data[56]).
+        if (len < 3 + sizeof(interrupt_in_data)) {
+            return;
+        }
         if ((data[56] & 1) != interrupt_in_data.PluggedHeadphones) {
             set_headset(data[56] & 1);
         }
@@ -203,6 +209,53 @@ bool tud_audio_set_itf_cb(uint8_t rhport, tusb_control_request_t const *p_reques
     return true;
 }
 
+// Output report 0x02 (SetStateData, without the report id) from the host,
+// sent to the controller as BT output report 0x31.
+static void forward_output_report(uint8_t const *data, uint16_t len) {
+    // An output report with no body has nothing to forward.
+    if (len == 0) {
+        return;
+    }
+    uint8_t outputData[78]{};
+    outputData[0] = 0x31;
+    outputData[1] = reportSeqCounter << 4;
+    reportSeqCounter = (reportSeqCounter + 1) & 0x0F;
+    outputData[2] = 0x10;
+    SetStateData state{};
+    // A short report fills only what it carries; the rest stays zero
+    // instead of being read from past the end of the transfer.
+    const uint16_t n = len < sizeof(SetStateData) ? len : (uint16_t) sizeof(SetStateData);
+    memcpy(&state, data, n);
+
+    const auto &config = get_config();
+    if (config.trigger_reduce > 0) {
+        state.AllowMotorPowerLevel = 1;
+        state.TriggerMotorPowerReduction = config.trigger_reduce;
+    }
+    if (config.speaker_gain > 0) {
+        state.AllowAudioControl2 = 1;
+        state.SpeakerCompPreGain = config.speaker_gain;
+    }
+    if (config.mic_select != 0) {
+        state.AllowAudioControl = 1;
+        state.MicSelect = config.mic_select;
+        state.NoiseCancelEnable = 1;
+    }
+    if (config.lock_volume) {
+        state.AllowHeadphoneVolume = 0;
+        state.AllowMicVolume = 0;
+        state.AllowSpeakerVolume = 0;
+        state.AllowAudioMute = 0;
+        state.AllowMuteLight = 0;
+    }
+
+    memcpy(outputData + 3, &state, sizeof(SetStateData));
+    bt_write(outputData, sizeof(outputData));
+#if ENABLE_VERBOSE
+    printf_hexdump(outputData,sizeof(outputData));
+#endif
+}
+
 // Invoked when received SET_REPORT control request or
 // received data on OUT endpoint ( Report ID = 0, Type = 0 )
 void tud_hid_set_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t report_type, uint8_t const *buffer,
@@ -248,48 +301,13 @@ void tud_hid_set_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t rep
         return;
     }
 
-    // INTERRUPT OUT
-    if (report_id == 0) {
-        switch (buffer[0]) {
-            case 0x02: {
-                uint8_t outputData[78]{};
-                outputData[0] = 0x31;
-                outputData[1] = reportSeqCounter << 4;
-                reportSeqCounter = (reportSeqCounter + 1) & 0x0F;
-                outputData[2] = 0x10;
-                SetStateData state{};
-                memcpy(&state,buffer + 1,sizeof(SetStateData));
-
-                const auto &config = get_config();
-                if (config.trigger_reduce > 0) {
-                    state.AllowMotorPowerLevel = 1;
-                    state.TriggerMotorPowerReduction = config.trigger_reduce;
-                }
-                if (config.speaker_gain > 0) {
-                    state.AllowAudioControl2 = 1;
-                    state.SpeakerCompPreGain = config.speaker_gain;
-                }
-                if (config.mic_select != 0) {
-                    state.AllowAudioControl = 1;
-                    state.MicSelect = config.mic_select;
-                    state.NoiseCancelEnable = 1;
-                }
-                if (config.lock_volume) {
-                    state.AllowHeadphoneVolume = 0;
-                    state.AllowMicVolume = 0;
-                    state.AllowSpeakerVolume = 0;
-                    state.AllowAudioMute = 0;
-                    state.AllowMuteLight = 0;
-                }
-
-                memcpy(outputData + 3, &state, sizeof(SetStateData));
-                bt_write(outputData, sizeof(outputData));
-#if ENABLE_VERBOSE
-                printf_hexdump(outputData,sizeof(outputData));
-#endif
-                break;
-            }
-        }
+    // Output report 0x02 arrives on the interrupt OUT endpoint (report_id 0,
+    // the id in buffer[0]) or, e.g. from HidD_SetOutputReport, as SET_REPORT
+    // on the control pipe (report_id 2, TinyUSB has stripped the id).
+    if (report_id == 0 && bufsize > 0 && buffer[0] == 0x02) {
+        forward_output_report(buffer + 1, bufsize - 1);
+    } else if (report_type == HID_REPORT_TYPE_OUTPUT && report_id == 0x02) {
+        forward_output_report(buffer, bufsize);
     }
 }
 
@@ -328,8 +346,14 @@ int main() {
 #endif
 
     if (cyw43_arch_init()) {
-        printf("Failed to initialize CYW43\n");
-        return 1;
+        // Returning here hangs the board (the watchdog isn't armed yet) until
+        // it is unplugged; reboot instead so the next boot retries.
+        printf("Failed to initialize CYW43, rebooting\n");
+        sleep_ms(500);
+        watchdog_reboot(0, 0, 0);
+        while (true) {
+            tight_loop_contents();
+        }
     }
     cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, false);
 
