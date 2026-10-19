@@ -33,9 +33,6 @@
 #define REPORT_SIZE_SINGLE 398
 #define REPORT_ID_DOUBLE  0x39
 #define REPORT_SIZE_DOUBLE 547
-// 扬声器禁用时用的纯 haptics 报文：0x32 固定 142 字节（和 update_state() 的
-// SetStateData 报文、update_mic_status() 的麦克风状态报文同一个报告类型），
-// 不再为 Opus 扬声器块预留空间。
 #define REPORT_ID_HAPTICS_ONLY 0x32
 #define REPORT_SIZE_HAPTICS_ONLY 142
 // #define VOLUME_GAIN       2
@@ -274,34 +271,6 @@ void __not_in_flash_func(audio_loop)() {
     const Config_body &cfg = get_config();
     const bool mic_enabled = mic_active && cfg.mic_select != 3;
     const bool speaker_enabled = cfg.speaker_select != 3;
-
-    /* 
-    // Mic playback: drain decoded mic PCM into the USB IN endpoint
-    static mic_decode_element mic_pb{};
-    if (queue_try_remove(&mic_decode_fifo, &mic_pb)) {
-        if (mic_enabled) {
-            // The controller mic is mono, but the USB descriptor presents a 2-channel
-            // mic (matching the real DS5) so Windows doesn't conflict with its cached
-            // DS5 audio format. Pack each mono int16 sample as L/R in one 32-bit word.
-            static uint32_t mic_stereo[MIC_FRAMES];
-            const int mono_samples = mic_pb.len / 2;
-            for (int i = 0; i < mono_samples; i++) {
-                const uint16_t sample = static_cast<uint16_t>(mic_pb.data[i]);
-                mic_stereo[i] = static_cast<uint32_t>(sample) | (static_cast<uint32_t>(sample) << 16);
-            }
-            const uint16_t stereo_len = (uint16_t) (mono_samples * sizeof(uint32_t));
-            uint16_t written = tud_audio_write(mic_stereo, stereo_len);
-            if (written != stereo_len) {
-                // Gated behind ENABLE_VERBOSE: when the host has not opened the mic
-                // interface (the common case -- most games never do) tud_audio_write
-                // short-writes every frame, so an unconditional log would flood
-                // core0's hot path with the newlib formatting chain.
-#if ENABLE_VERBOSE
-                printf("[Audio] Warning: USB mic FIFO wrote %u/%u bytes\n", written, stereo_len);
-#endif
-            }
-        }
-    */
 
     // --- BUGFIX: HARDWARE-THROTTLED DIRECT SLICE DRAINING ---
     // Slaves the microphone transmission speed to the USB host clock.
